@@ -1,0 +1,210 @@
+openapi: 3.0.3
+info:
+  title: API PoliScope
+  version: 0.1.0
+  description: |
+    Contrat d'API cible de PoliScope (CEGIT). Implémentation prévue : FastAPI + PostgreSQL/PostGIS.
+    Authentification OpenID Connect (Keycloak). Le rôle et le périmètre de l'utilisateur sont lus
+    dans le jeton et appliqués par PostgreSQL Row-Level Security.
+servers:
+  - url: https://poliscope.example.sn/api/v1
+security:
+  - oidc: []
+tags:
+  - name: Territoires
+  - name: Indicateurs
+  - name: Maillage
+  - name: Contacts
+  - name: Actions
+  - name: Terrain
+  - name: Rapports
+  - name: CivicScope
+paths:
+  /territoires/{niveau}:
+    get:
+      tags: [Territoires]
+      summary: Liste des régions, départements ou communes (GeoJSON)
+      parameters:
+        - $ref: '#/components/parameters/Niveau'
+        - name: parent
+          in: query
+          description: Code du territoire parent (ex. SN.TH pour les départements de Thiès)
+          schema: { type: string }
+      responses:
+        '200':
+          description: FeatureCollection
+          content: { application/geo+json: { schema: { $ref: '#/components/schemas/FeatureCollection' } } }
+  /indicateurs/{niveau}:
+    get:
+      tags: [Indicateurs]
+      summary: Indicateurs agrégés (score, rang, participation, couverture, membres/10 000 hab., tendance, typologie, priorité)
+      parameters:
+        - $ref: '#/components/parameters/Niveau'
+        - name: scrutin
+          in: query
+          description: Identifiant du scrutin (par défaut le scrutin de référence)
+          schema: { type: string, format: uuid }
+        - name: poids
+          in: query
+          description: Pondération du score de priorité, ex. poids=3,2,2,3,1,1
+          schema: { type: string }
+      responses:
+        '200':
+          description: Indicateurs par territoire
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Indicateurs' } }
+  /structures:
+    get:
+      tags: [Maillage]
+      summary: Siège, coordinations, sections et antennes (lecture pour tous les profils)
+      parameters:
+        - { name: departement, in: query, schema: { type: string } }
+        - { name: statut, in: query, schema: { type: string, enum: [active, a_relancer, inactive] } }
+      responses:
+        '200': { description: Points GeoJSON, content: { application/geo+json: { schema: { $ref: '#/components/schemas/FeatureCollection' } } } }
+    post:
+      tags: [Maillage]
+      summary: Proposer une antenne (périmètre de l'utilisateur, validation par la coordination)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Structure' } } }
+      responses:
+        '201': { description: Créée (en attente de validation) }
+        '403': { $ref: '#/components/responses/HorsPerimetre' }
+  /structures/{id}:
+    patch:
+      tags: [Maillage]
+      summary: Modifier une fiche de section
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/Structure' } } }
+      responses:
+        '200': { description: Mise à jour, tracée dans le journal }
+        '403': { $ref: '#/components/responses/HorsPerimetre' }
+  /contacts:
+    get:
+      tags: [Contacts]
+      summary: Contacts du périmètre de l'utilisateur (aucun accès pour analyste et bénévole)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: consentement, in: query, schema: { type: boolean } }
+      responses:
+        '200': { description: Liste paginée, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Contact' } } } } }
+    post:
+      tags: [Contacts]
+      summary: Créer un contact (consentement obligatoire)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Contact' } } }
+      responses:
+        '201': { description: Créé }
+        '422': { description: Consentement manquant }
+  /actions:
+    get:
+      tags: [Actions]
+      summary: Actions terrain
+      responses: { '200': { description: Liste, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Action' } } } } } }
+    post:
+      tags: [Actions]
+      summary: Créer une action (avec zone dessinée facultative)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Action' } } }
+      responses:
+        '201': { description: Créée }
+        '403': { $ref: '#/components/responses/HorsPerimetre' }
+  /terrain/remontees:
+    post:
+      tags: [Terrain]
+      summary: Webhook de réception des soumissions KoboToolbox / ODK Central
+      description: Contrôle des doublons, du consentement et du périmètre, puis insertion.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        '202': { description: Acceptée }
+  /rapports/territoire/{code}.pdf:
+    get:
+      tags: [Rapports]
+      summary: Rapport PDF territorial (carte, sections et coordinations, tableau de bord, statistiques)
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string } }
+        - { name: contenu, in: query, description: 'carte,positions,tableau,sous,sections,recos', schema: { type: string } }
+      responses:
+        '200': { description: Document PDF, content: { application/pdf: { schema: { type: string, format: binary } } } }
+  /civicscope/synchroniser:
+    post:
+      tags: [CivicScope]
+      summary: Importer les résultats validés d'un scrutin depuis CivicScope (administrateur général)
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { scrutin: { type: string }, parti: { type: string } } } } }
+      responses:
+        '202': { description: Import lancé ; les indicateurs sont recalculés à la fin }
+components:
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://auth.poliscope.example.sn/realms/poliscope/.well-known/openid-configuration
+  parameters:
+    Niveau:
+      name: niveau
+      in: path
+      required: true
+      schema: { type: string, enum: [regions, departements, communes] }
+  responses:
+    HorsPerimetre:
+      description: Objet hors du périmètre de modification de l'utilisateur
+  schemas:
+    FeatureCollection:
+      type: object
+      properties:
+        type: { type: string, example: FeatureCollection }
+        features: { type: array, items: { type: object } }
+    Indicateurs:
+      type: object
+      properties:
+        code: { type: string }
+        nom: { type: string }
+        inscrits: { type: integer }
+        participation: { type: number, description: 'votants / inscrits (%)' }
+        score: { type: number, description: 'voix du parti / exprimés (%)' }
+        rang: { type: integer }
+        couverture: { type: number, description: 'communes avec section active / communes (%)' }
+        membres_10k: { type: number }
+        tendance_activite: { type: number, description: 'évolution des actions sur 90 jours (%)' }
+        typologie: { type: string, enum: [bastion, concurrentielle, renforcer, conquerir] }
+        a_surveiller: { type: boolean }
+        priorite: { type: integer, minimum: 0, maximum: 100 }
+    Structure:
+      type: object
+      properties:
+        niveau: { type: string, enum: [section_communale, sous_section, antenne] }
+        nom: { type: string }
+        code_commune: { type: string }
+        responsable: { type: string }
+        membres: { type: integer }
+        cartes_annee: { type: integer }
+        position: { type: array, items: { type: number }, minItems: 2, maxItems: 2, description: '[longitude, latitude]' }
+    Contact:
+      type: object
+      required: [prenom, nom, statut, code_commune, consentement]
+      properties:
+        prenom: { type: string }
+        nom: { type: string }
+        telephone: { type: string }
+        statut: { type: string, enum: [militant, sympathisant, benevole, responsable] }
+        code_commune: { type: string }
+        etiquettes: { type: array, items: { type: string } }
+        consentement: { type: boolean, enum: [true] }
+    Action:
+      type: object
+      required: [intitule, type, code_departement]
+      properties:
+        intitule: { type: string }
+        type: { type: string, enum: [porte_a_porte, phoning, reunion, caravane, tractage, consultation, meeting, placement_cartes] }
+        code_departement: { type: string }
+        equipe: { type: string }
+        objectif: { type: integer }
+        debut: { type: string, format: date }
+        zone: { type: object, description: 'Polygone GeoJSON' }

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PoliScope</title>
+<meta name="description" content="PoliScope (CEGIT) — plateforme cartocentrée de stratégie politique et de pilotage territorial pour les partis et coalitions au Sénégal. Prototype, données de démonstration.">
+<meta name="theme-color" content="#0f2b2b">
+<link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="assets/css/fonts.css">
+<link rel="stylesheet" href="assets/css/poliscope.css">
+</head>
+<body>
+<div id="app" aria-live="polite"><p style="padding:40px;font-family:sans-serif">Chargement de PoliScope…</p></div>
+<noscript><p style="padding:40px">PoliScope nécessite JavaScript.</p></noscript>
+<script src="assets/vendor/leaflet/leaflet.js"></script>
+<script src="assets/vendor/jspdf/jspdf.umd.min.js"></script>
+<script src="assets/vendor/jspdf/jspdf.plugin.autotable.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/app.js"></script>
+<script src="assets/js/map.js"></script>
+<script src="assets/js/report.js"></script>
+<script>PS.boot();</script>
+</body>
+</html>

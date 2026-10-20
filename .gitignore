@@ -1,0 +1,15 @@
+# Secrets et environnements
+.env
+deploy/.env
+# Système / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Python
+__pycache__/
+*.pyc
+.venv/
+# Exports locaux
+*.pdf
+!docs/**/*.pdf

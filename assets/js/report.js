@@ -1,0 +1,168 @@
+/* PoliScope — rapports PDF territoriaux (jsPDF + jsPDF-AutoTable, licence MIT) et exports de données.
+   Le rapport contient : la carte du territoire (typologie, sections, coordinations), le tableau de bord,
+   les sous-territoires, la liste géolocalisée des sections et coordinations, les recommandations. */
+window.PS = window.PS || {};
+(function (PS) {
+  'use strict';
+  const { $, $$, esc, fmt, dayFmt } = PS.U;
+  const S = PS.S;
+  // Palette fixe pour l'impression (indépendante du thème clair/sombre de l'écran)
+  const PAL = { teal: '#0b6466', amber: '#c98a12', peri: '#5d6fe0', coral: '#c4533a', grey: '#7a8a87', ink: '#14211f', line: '#c9d4d2', land: '#f3f5f2', rail: '#0f2b2b' };
+  const TYPO_PRINT = { bastion: PAL.teal, concurrentielle: '#a3aead', renforcer: PAL.amber, conquerir: PAL.peri };
+  const STAT = { 'Active': PAL.teal, 'À relancer': PAL.amber, 'Inactive': PAL.coral };
+  const clean = s => String(s ?? '').replace(/[  ]/g, ' ').replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/…/g, '...').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/•/g, '-').replace(/→/g, '->').replace(/·/g, '-');
+  const nf = n => clean(fmt(n));
+
+  if (!S.report) S.report = { terr: null, opts: { carte: true, positions: true, tableau: true, sous: true, sections: true, recos: true } };
+
+  function childrenOf(u) { return u.level === 'nat' ? PS.D.regions : u.level === 'reg' ? u.children : u.level === 'dep' ? u.children : [u] }
+  function geomsOf(u) { return u.level === 'nat' ? PS.D.regions.map(r => r.geom) : [u.geom] }
+  function bboxOf(gs) { const a = [180, 90, -180, -90]; for (const g of gs) { const b = PS.D.bbox(g); a[0] = Math.min(a[0], b[0]); a[1] = Math.min(a[1], b[1]); a[2] = Math.max(a[2], b[2]); a[3] = Math.max(a[3], b[3]) } return a }
+
+  /* ---------- Carte du territoire dessinée sur canvas ---------- */
+  PS.drawTerritoryMap = function (cv, u, opts) {
+    const g = cv.getContext('2d'), W = cv.width, H = cv.height, pad = 36;
+    const bb = bboxOf(geomsOf(u)); const lat0 = (bb[1] + bb[3]) / 2, kx = Math.cos(lat0 * Math.PI / 180);
+    const sx = (W - 2 * pad) / ((bb[2] - bb[0]) * kx || 1), sy = (H - 2 * pad) / ((bb[3] - bb[1]) || 1), k = Math.min(sx, sy);
+    const ox = (W - (bb[2] - bb[0]) * kx * k) / 2, oy = (H - (bb[3] - bb[1]) * k) / 2;
+    const P = ([x, y]) => [ox + (x - bb[0]) * kx * k, H - oy - (y - bb[1]) * k];
+    const path = geom => { const ps = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates; g.beginPath(); for (const p of ps) for (const ring of p) { ring.forEach((pt, i) => { const [x, y] = P(pt); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath() } };
+    g.fillStyle = '#eef4f6'; g.fillRect(0, 0, W, H);
+    // contexte : territoires voisins
+    const ctx = u.level === 'nat' ? [] : u.level === 'reg' ? PS.D.regions.filter(r => r !== u) : u.level === 'dep' ? PS.D.depts.filter(d => d !== u) : PS.D.communes.filter(c => c.dep === u.dep && c !== u);
+    for (const v of ctx) { path(v.geom); g.fillStyle = '#e4e8e6'; g.fill('evenodd'); g.strokeStyle = '#ffffff'; g.lineWidth = 1; g.stroke() }
+    const kids = childrenOf(u);
+    for (const c of kids) { path(c.geom); g.fillStyle = TYPO_PRINT[PS.typo(c)]; g.globalAlpha = 0.78; g.fill('evenodd'); g.globalAlpha = 1; g.strokeStyle = '#ffffff'; g.lineWidth = 1.4; g.stroke() }
+    for (const gg of geomsOf(u)) { path(gg); g.strokeStyle = PAL.rail; g.lineWidth = 2.6; g.stroke() }
+    if (opts.positions) {
+      const secs = PS.sectionsOf(u);
+      const r = Math.max(3.5, Math.min(7, 900 / Math.sqrt(secs.length + 50)));
+      for (const s of secs) { const [x, y] = P([s.lng, s.lat]); g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = STAT[s.statut]; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.stroke() }
+      const inU = c => u.level === 'nat' || (u.level === 'reg' && c.r === u.n) || (u.level === 'dep' && c.dep === u.n) || (u.level === 'com' && c.dep === u.dep && PS.D.inGeom([c.lng, c.lat], u.geom));
+      for (const c of PS.D.coordsDep.filter(inU)) { const [x, y] = P([c.lng, c.lat]); g.save(); g.translate(x, y); g.rotate(Math.PI / 4); g.fillStyle = PAL.teal; g.strokeStyle = '#fff'; g.lineWidth = 2; g.fillRect(-7, -7, 14, 14); g.strokeRect(-7, -7, 14, 14); g.restore() }
+      for (const c of PS.D.coordsReg.filter(c => u.level === 'nat' || c.r === u.r || c.r === u.n)) { if (u.level === 'com' && !PS.D.inGeom([c.lng, c.lat], u.geom)) continue; const [x, y] = P([c.lng, c.lat]); g.fillStyle = PAL.rail; g.fillRect(x - 11, y - 11, 22, 22); g.strokeStyle = PAL.amber; g.lineWidth = 2.5; g.strokeRect(x - 11, y - 11, 22, 22); g.fillStyle = '#fff'; g.font = 'bold 12px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('R', x, y + 1) }
+    }
+    if (kids.length > 1 && kids.length <= 40) {
+      g.font = `600 ${kids.length > 20 ? 13 : 16}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (const c of kids) { const [x, y] = P([c.lng, c.lat]); g.lineWidth = 4; g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(c.n, x, y); g.fillStyle = PAL.ink; g.fillText(c.n, x, y) }
+    }
+    // nord + échelle
+    g.fillStyle = PAL.ink; g.beginPath(); g.moveTo(W - 40, 26); g.lineTo(W - 50, 54); g.lineTo(W - 40, 48); g.lineTo(W - 30, 54); g.closePath(); g.fill(); g.font = 'bold 14px sans-serif'; g.textAlign = 'center'; g.fillText('N', W - 40, 70);
+    const kmPerPx = 111.32 * kx / (k * kx) * kx; // degrés -> km (approx.)
+    const target = (W * 0.18) * (111.32 * kx) / (kx * k); const nice = [1, 2, 5, 10, 20, 25, 50, 100, 200][[1, 2, 5, 10, 20, 25, 50, 100, 200].findIndex(v => v >= target * 0.6)] || 200;
+    const px = nice / (111.32 * kx) * kx * k; g.fillStyle = PAL.ink; g.fillRect(24, H - 30, px, 6); g.fillStyle = '#fff'; g.fillRect(24 + px / 2, H - 29, px / 2 - 1, 4); g.fillStyle = PAL.ink; g.font = '13px sans-serif'; g.textAlign = 'left'; g.fillText(`${nice} km`, 28 + px, H - 25);
+    void kmPerPx;
+  };
+
+  /* ---------- Vue Rapports ---------- */
+  PS.VIEWS.rapports = {
+    html() {
+      if (!S.report.terr) S.report.terr = S.focus || 'nat';
+      const O = S.report.opts;
+      const ex = [['csv-sub', 'Indicateurs des sous-territoires', 'CSV · une ligne par région, département ou commune du territoire choisi'], ['geo-com', 'Communes + indicateurs', 'GeoJSON · géométries et indicateurs, pour QGIS ou un WebSIG'], ['geo-sec', 'Sections et coordinations', 'GeoJSON · points géolocalisés, statut, effectifs'], ['csv-act', 'Actions terrain', 'CSV · type, territoire, équipe, objectif, réalisé']];
+      return `<div class="view-head"><div><div class="label">Rapports</div><h1>Rapport PDF territorial</h1><p>Choisissez une région, un département ou une commune : PoliScope produit un PDF avec la carte du territoire, la position des sections et coordinations, le tableau de bord et les statistiques.</p></div></div>
+      <div class="report-grid">
+        <section class="panel"><header><h3>Paramètres</h3></header><div class="body" style="display:grid;gap:14px">
+          <div class="field"><label for="rpTerr">Territoire</label>${PS.terrSelect('rpTerr', S.report.terr, true).replace('id="rpTerr"', 'id="rpTerr" style="width:100%"')}</div>
+          <div class="checks"><div class="label">Contenu</div>
+            ${[['carte', 'Carte du territoire (typologie)'], ['positions', 'Position des sections et coordinations'], ['tableau', 'Tableau de bord et statistiques'], ['sous', 'Indicateurs des sous-territoires'], ['sections', 'Liste géolocalisée des sections'], ['recos', 'Recommandations']].map(([k, l]) => `<label><input type="checkbox" data-opt="${k}" ${O[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+          <button class="btn primary" id="rpGo" style="justify-content:center">Générer le PDF</button>
+          <p class="small muted" style="margin:0">Le document est produit dans le navigateur (jsPDF, open source) et inscrit au journal. En production : génération serveur (WeasyPrint) et archivage.</p>
+        </div></section>
+        <section class="panel"><header><h3>Aperçu de la carte</h3><span class="sub" id="rpSub"></span></header><div class="body"><div class="report-prev"><canvas id="rpCanvas" width="1600" height="1100" aria-label="Aperçu de la carte du rapport"></canvas></div>
+          <div class="legend" style="flex-direction:row;flex-wrap:wrap;gap:6px 16px;margin-top:10px">${Object.keys(PS.TYPO).map(t => `<span class="li"><span class="sw" style="background:${TYPO_PRINT[t]}"></span>${PS.TYPO[t].l}</span>`).join('')}${Object.keys(STAT).map(s => `<span class="li"><span class="sdot" style="background:${STAT[s]}"></span>Section ${s.toLowerCase()}</span>`).join('')}<span class="li"><span class="coord-icon" style="width:10px;height:10px;background:${PAL.teal}"></span>Coord. départementale</span><span class="li"><span class="hq-icon" style="width:16px;height:16px;font-size:8px">R</span>Coord. régionale</span></div></div></section>
+      </div>
+      <h2 style="font-size:18px;margin:26px 0 12px">Exports de données</h2>
+      <div class="grid g-2">${ex.map(e => `<section class="panel"><div class="body row" style="justify-content:space-between;flex-wrap:nowrap"><div style="min-width:0"><b>${e[1]}</b><div class="small muted">${e[2]}</div></div><button class="btn" data-exp="${e[0]}">Exporter</button></div></section>`).join('')}</div>`;
+    },
+    bind() {
+      const prev = () => { const u = PS.unit(S.report.terr); $('#rpSub').textContent = PS.terrLabel(u); PS.drawTerritoryMap($('#rpCanvas'), u, S.report.opts) };
+      $('#rpTerr').addEventListener('change', e => { S.report.terr = e.target.value; prev() });
+      $$('[data-opt]').forEach(c => c.addEventListener('change', () => { S.report.opts[c.dataset.opt] = c.checked; prev() }));
+      $('#rpGo').addEventListener('click', () => buildPDF(PS.unit(S.report.terr), S.report.opts));
+      $$('[data-exp]').forEach(b => b.addEventListener('click', () => doExport(b.dataset.exp)));
+      prev();
+    }
+  };
+
+  /* ---------- Génération PDF ---------- */
+  function buildPDF(u, O) {
+    if (!window.jspdf) { PS.toast('Le module PDF n’est pas chargé.'); return }
+    const { jsPDF } = window.jspdf; const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 14; let y = 0;
+    const kids = childrenOf(u).filter(c => c !== u);
+    const head = (title) => { doc.setFillColor(PAL.rail); doc.rect(0, 0, W, 24, 'F'); doc.setTextColor('#ffffff'); doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.text('PoliScope', M, 11); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor('#c9dcda'); doc.text('Pilotage territorial - CEGIT', M, 17); doc.setTextColor('#f6d48a'); doc.text(clean(title), W - M, 11, { align: 'right' }); doc.setTextColor('#c9dcda'); doc.text(clean(`${dayFmt(0)} 2026 - ${PS.user.nom} (${PS.role.court})`), W - M, 17, { align: 'right' }); doc.setTextColor(PAL.ink); y = 32 };
+    const h2 = t => { if (y > 260) { doc.addPage(); head(PS.terrLabel(u)) } doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(PAL.teal); doc.text(clean(t), M, y); doc.setTextColor(PAL.ink); y += 6 };
+    head(PS.terrLabel(u));
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.text(clean(`Rapport territorial - ${PS.terrLabel(u)}`), M, y + 4); y += 11;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor('#4a5b58');
+    doc.text(doc.splitTextToSize(clean(`Typologie : ${PS.TYPO[PS.typo(u)].l}. Score de priorité : ${PS.priority(u)}/100. Résultats : CivicScope (scrutin de référence). Maillage et activité : PoliScope. Population : RGPH-5 (ANSD, 2023)${u.level === 'com' ? ', estimée à la commune' : ''}. Données du parti simulées (démonstration).`), W - 2 * M), M, y); y += 11; doc.setTextColor(PAL.ink);
+    // KPI
+    const kp = [['Sections actives', `${nf(u.actives)} / ${nf(u.sections)}`], ['Couverture', `${u.couv} %`], ['Membres', nf(u.membres)], ['Cartes 2026', `${nf(u.cartes)} (${Math.round(u.cartes / Math.max(1, u.objCartes) * 100)} %)`], ['Score électoral', clean(PS.U.pct(u.score, 1))], ['Participation', clean(PS.U.pct(u.participation, 1))]];
+    const bw = (W - 2 * M - 5 * 3) / 6;
+    kp.forEach((k, i) => { const x = M + i * (bw + 3); doc.setFillColor('#f6f8f8'); doc.setDrawColor(PAL.line); doc.roundedRect(x, y, bw, 17, 1.5, 1.5, 'FD'); doc.setFontSize(6.5); doc.setTextColor('#7a8a87'); doc.text(clean(k[0].toUpperCase()), x + 2, y + 5); doc.setFontSize(10.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(PAL.ink); doc.text(clean(k[1]), x + 2, y + 12.5); doc.setFont('helvetica', 'normal') });
+    y += 23;
+    if (O.carte || O.positions) {
+      const cv = document.createElement('canvas'); cv.width = 1600; cv.height = 1100; PS.drawTerritoryMap(cv, u, O);
+      const iw = W - 2 * M, ih = iw * 1100 / 1600; doc.addImage(cv.toDataURL('image/jpeg', 0.9), 'JPEG', M, y, iw, ih); doc.setDrawColor(PAL.line); doc.rect(M, y, iw, ih); y += ih + 4;
+      doc.setFontSize(8); let lx = M;
+      const lg = [...Object.keys(PS.TYPO).map(t => [TYPO_PRINT[t], PS.TYPO[t].l, 'sq']), ...(O.positions ? Object.keys(STAT).map(s => [STAT[s], 'Section ' + s.toLowerCase(), 'ci']) : [])];
+      lg.forEach(([c, l, sh]) => { doc.setFillColor(c); sh === 'sq' ? doc.rect(lx, y - 2.6, 3, 3, 'F') : doc.circle(lx + 1.5, y - 1.1, 1.4, 'F'); doc.text(clean(l), lx + 4.5, y); lx += doc.getTextWidth(clean(l)) + 9 }); y += 8;
+    }
+    if (O.tableau) {
+      if (y > 215) { doc.addPage(); head(PS.terrLabel(u)) }
+      h2('Tableau de bord');
+      const rows = [['Inscrits', nf(u.inscrits)], ['Rang du parti', PS.RANG[u.rang].l], ['Évolution du score', `${(u.score - u.scorePrev) >= 0 ? '+' : ''}${(u.score - u.scorePrev).toFixed(1)} pt`], ['1er concurrent', clean(PS.U.pct(u.rival, 1))], ['Population', nf(u.pop)], ['Densité', `${nf(u.densite)} hab./km²`], ['Communes', nf(u.communes)], ['Sections inactives (> 90 j)', nf(u.inactives)], ['Membres pour 10 000 hab.', String(u.membres10k).replace('.', ',')], ['Actions (30 j)', nf(u.actions30)], ['Tendance d\'activité (90 j)', `${u.activityTrend > 0 ? '+' : ''}${u.activityTrend} %`], ['Indice d\'accessibilité', String(u.access).replace('.', ',')]];
+      const half = Math.ceil(rows.length / 2);
+      doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'grid', styles: { fontSize: 8.5, cellPadding: 1.6, lineColor: PAL.line }, headStyles: { fillColor: PAL.teal }, head: [['Indicateur', 'Valeur', 'Indicateur', 'Valeur']], body: rows.slice(0, half).map((r, i) => [clean(r[0]), clean(r[1]), clean((rows[half + i] || ['', ''])[0]), clean((rows[half + i] || ['', ''])[1])]), columnStyles: { 1: { halign: 'right', fontStyle: 'bold' }, 3: { halign: 'right', fontStyle: 'bold' } } });
+      y = doc.lastAutoTable.finalY + 8;
+      const tc = { bastion: 0, concurrentielle: 0, renforcer: 0, conquerir: 0 }; (kids.length ? kids : [u]).forEach(c => tc[PS.typo(c)]++);
+      doc.setFontSize(9); doc.text(clean(`Typologie des ${kids.length ? (u.level === 'nat' ? 'régions' : u.level === 'reg' ? 'départements' : 'communes') : 'territoires'} : ` + Object.keys(tc).map(k => `${PS.TYPO[k].l} ${tc[k]}`).join(' - ')), M, y); y += 8;
+    }
+    if (O.sous && kids.length) {
+      if (y > 230) { doc.addPage(); head(PS.terrLabel(u)) }
+      h2(`Indicateurs des ${u.level === 'nat' ? 'régions' : u.level === 'reg' ? 'départements' : 'communes'}`);
+      doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'striped', styles: { fontSize: 8, cellPadding: 1.4 }, headStyles: { fillColor: PAL.teal }, head: [['Territoire', 'Typologie', 'Score', 'Rang', 'Particip.', 'Couv.', 'Sections', 'Membres', 'Priorité']],
+        body: [...kids].sort((a, b) => PS.priority(b) - PS.priority(a)).map(c => [clean(c.n), clean(PS.TYPO[PS.typo(c)].l), clean(PS.U.pct(c.score, 1)), PS.RANG[c.rang].l, clean(PS.U.pct(c.participation, 0)), `${c.couv} %`, nf(c.sections), nf(c.membres), String(PS.priority(c))]),
+        columnStyles: { 2: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right', fontStyle: 'bold' } },
+        didParseCell: d => { if (d.section === 'body' && d.column.index === 1) { const k = Object.keys(PS.TYPO).find(t => clean(PS.TYPO[t].l) === d.cell.raw); if (k) d.cell.styles.textColor = TYPO_PRINT[k] === '#a3aead' ? '#5c6866' : TYPO_PRINT[k] } } });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+    if (O.sections || O.positions) {
+      const secs = PS.sectionsOf(u);
+      doc.addPage(); head(PS.terrLabel(u));
+      h2(`Sections et antennes (${secs.length}) - positions`);
+      doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'striped', styles: { fontSize: 7.5, cellPadding: 1.2 }, headStyles: { fillColor: PAL.teal }, head: [['Section', 'Commune', 'Niveau', 'Statut', 'Responsable', 'Membres', 'Latitude', 'Longitude']],
+        body: secs.slice(0, 600).map(s => [clean(s.name), clean(s.communeName), clean(s.level), clean(s.statut), PS.canSeePII(s) ? clean(s.resp) : '-', nf(s.membres), s.lat.toFixed(5), s.lng.toFixed(5)]),
+        columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right', font: 'courier' }, 7: { halign: 'right', font: 'courier' } },
+        didParseCell: d => { if (d.section === 'body' && d.column.index === 3) d.cell.styles.textColor = STAT[{ 'Active': 'Active', 'A relancer': 'À relancer', 'Inactive': 'Inactive' }[d.cell.raw] || 'À relancer'] } });
+      y = doc.lastAutoTable.finalY + 8;
+      const inU = c => u.level === 'nat' || c.r === u.n || (u.level === 'dep' && c.dep === u.n) || (u.level === 'com' && c.dep === u.dep);
+      const co = [PS.D.hq, ...PS.D.coordsReg, ...PS.D.coordsDep].filter(c => u.level === 'nat' ? true : u.level === 'reg' ? c.r === u.n : inU(c));
+      if (co.length) { if (y > 250) { doc.addPage(); head(PS.terrLabel(u)) } h2('Siège et coordinations'); doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'striped', styles: { fontSize: 8, cellPadding: 1.3 }, headStyles: { fillColor: PAL.rail }, head: [['Structure', 'Type', 'Responsable', 'Latitude', 'Longitude']], body: co.map(c => [clean(c.name), clean(c.type), clean(c.resp), c.lat.toFixed(4), c.lng.toFixed(4)]) }); y = doc.lastAutoTable.finalY + 8 }
+    }
+    if (O.recos) {
+      if (y > 240) { doc.addPage(); head(PS.terrLabel(u)) }
+      h2('Recommandations');
+      const pool = (kids.length ? kids : [u]).map(c => ({ c, p: PS.priority(c) })).sort((a, b) => b.p - a.p).slice(0, 6);
+      doc.setFontSize(9);
+      for (const { c, p } of pool) { const r = PS.recos(c); const txt = clean(`${c.n} (priorité ${p}/100) : ${r.length ? r.map(x => x[1]).join(' ') : 'maintenir l\'effort actuel.'}`); const lines = doc.splitTextToSize(txt, W - 2 * M - 4); if (y + lines.length * 4.4 > 282) { doc.addPage(); head(PS.terrLabel(u)) } doc.setFillColor(PAL.amber); doc.rect(M, y - 3, 1.2, lines.length * 4.4, 'F'); doc.text(lines, M + 4, y); y += lines.length * 4.4 + 3 }
+    }
+    const n = doc.getNumberOfPages();
+    for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor('#7a8a87'); doc.text(clean('PoliScope (c) CEGIT - démonstration, données du parti simulées - limites GADM v4.1 (provisoire)'), M, 291); doc.text(`${i} / ${n}`, W - M, 291, { align: 'right' }) }
+    const name = `PoliScope_rapport_${PS.terrLabel(u).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
+    try { doc.save(name); PS.log(`a généré le rapport PDF « ${PS.terrLabel(u)} »`); PS.toast(`Rapport ${name} généré (${n} pages).`) } catch (e) { PS.toast('Le navigateur a bloqué le téléchargement du PDF.') }
+  }
+  PS.buildPDF = buildPDF;
+
+  /* ---------- Exports ---------- */
+  const csv = rows => rows.map(r => r.map(v => { v = String(v ?? ''); return /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v }).join(';')).join('\n');
+  function download(name, txt, type) { try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: type + ';charset=utf-8' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); PS.log(`a exporté ${name}`); PS.toast(`Export ${name} téléchargé.`) } catch (e) { PS.toast('Téléchargement bloqué par le navigateur.') } }
+  function doExport(k) {
+    const u = PS.unit(S.report.terr || 'nat'), slug = PS.terrLabel(u).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_');
+    if (k === 'csv-sub') { const ks = childrenOf(u); download(`poliscope_${slug}_indicateurs.csv`, csv([['territoire', 'niveau', 'region', 'departement', 'population', 'inscrits', 'participation', 'score', 'rang', 'couverture', 'sections', 'membres', 'cartes', 'priorite', 'typologie'], ...ks.map(c => [c.n, c.level, c.r, c.dep || '', c.pop, c.inscrits, c.participation, c.score, c.rang, c.couv, c.sections, c.membres, c.cartes, PS.priority(c), PS.TYPO[PS.typo(c)].l])]), 'text/csv') }
+    if (k === 'geo-com') { const cs = PS.communesOf(u); download(`poliscope_${slug}_communes.geojson`, JSON.stringify({ type: 'FeatureCollection', features: cs.map(c => ({ type: 'Feature', properties: { commune: c.n, departement: c.dep, region: c.r, score: c.score, rang: c.rang, participation: c.participation, section_active: c.couv > 0, membres: c.membres, priorite: PS.priority(c), typologie: PS.TYPO[PS.typo(c)].l }, geometry: c.geom })) }), 'application/geo+json') }
+    if (k === 'geo-sec') { const ss = PS.sectionsOf(u); download(`poliscope_${slug}_sections.geojson`, JSON.stringify({ type: 'FeatureCollection', features: ss.map(s => ({ type: 'Feature', properties: { nom: 'Section ' + s.name, niveau: s.level, commune: s.communeName, departement: s.dep, statut: s.statut, responsable: PS.canSeePII(s) ? s.resp : null, membres: s.membres }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } })) }, null, 1), 'application/geo+json') }
+    if (k === 'csv-act') download(`poliscope_${slug}_actions.csv`, csv([['action', 'type', 'departement', 'statut', 'equipe', 'objectif', 'realise'], ...PS.ACTIONS().filter(a => PS.inUnit(a, u)).map(a => [a.t, a.type, a.dep, a.st, a.team, a.obj, a.done])]), 'text/csv');
+  }
+})(window.PS);
