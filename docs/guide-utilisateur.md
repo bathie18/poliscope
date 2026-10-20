@@ -2,7 +2,7 @@
 
 ## Se connecter
 
-Ouvrez l'application, puis saisissez votre identifiant et votre mot de passe. En démonstration, il suffit aussi de cliquer sur un profil (mot de passe `demo`). Le bandeau du haut affiche ensuite votre nom, votre profil et votre périmètre. Le bouton **Se déconnecter** permet de changer de profil.
+Ouvrez l'application, puis saisissez votre identifiant et votre mot de passe. En démonstration, les identifiants fictifs sont affichés sous chaque profil (par exemple `admin` / `admin`) ; on peut aussi cliquer directement sur un profil. Le bandeau du haut affiche ensuite votre nom, votre profil et votre périmètre. Le bouton **Se déconnecter** permet de changer de profil.
 
 ## La carte stratégique
 

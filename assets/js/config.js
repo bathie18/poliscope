@@ -52,13 +52,16 @@ window.PS = window.PS || {};
 
   /* ---------- Comptes de démonstration (fictifs) ----------
      Aucun mot de passe réel : l'authentification du prototype est simulée côté navigateur. */
-  PS.DEMO_PASSWORD = 'demo';
+  // Identifiants FICTIFS de démonstration, publiés volontairement : ils ne protègent rien.
   PS.USERS = [
-    { login: 'admin.national', nom: 'Fatou Diop', role: 'admin_general', perimetre: { type: 'national' } },
-    { login: 'coord.thies', nom: 'Aliou Sarr', role: 'admin_regional', perimetre: { type: 'region', nom: 'Thiès' } },
-    { login: 'section.mbour', nom: 'Moussa Ba', role: 'admin_section', perimetre: { type: 'departement', nom: 'Mbour' } },
-    { login: 'analyste', nom: 'Awa Ndiaye', role: 'analyste', perimetre: { type: 'national' } },
-    { login: 'benevole.pikine', nom: 'Modou Fall', role: 'benevole', perimetre: { type: 'departement', nom: 'Pikine' } }
+    { login: 'admin', password: 'admin', nom: 'Administrateur PoliScope', role: 'admin_general', perimetre: { type: 'national' } },
+    { login: 'admin.national', password: 'National2026', nom: 'Fatou Diop', role: 'admin_general', perimetre: { type: 'national' } },
+    { login: 'coord.thies', password: 'Thies2026', nom: 'Aliou Sarr', role: 'admin_regional', perimetre: { type: 'region', nom: 'Thiès' } },
+    { login: 'coord.dakar', password: 'Dakar2026', nom: 'Khady Mbaye', role: 'admin_regional', perimetre: { type: 'region', nom: 'Dakar' } },
+    { login: 'section.mbour', password: 'Mbour2026', nom: 'Moussa Ba', role: 'admin_section', perimetre: { type: 'departement', nom: 'Mbour' } },
+    { login: 'section.kaolack', password: 'Kaolack2026', nom: 'Seynabou Faye', role: 'admin_section', perimetre: { type: 'departement', nom: 'Kaolack' } },
+    { login: 'analyste', password: 'Analyse2026', nom: 'Awa Ndiaye', role: 'analyste', perimetre: { type: 'national' } },
+    { login: 'benevole.pikine', password: 'Pikine2026', nom: 'Modou Fall', role: 'benevole', perimetre: { type: 'departement', nom: 'Pikine' } }
   ];
 
   /* ---------- Typologie des territoires ---------- */

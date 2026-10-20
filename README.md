@@ -28,15 +28,18 @@ PoliScope est la solution « partis politiques » de la famille de [CivicScope](
 
 L'application s'ouvre sur un écran de connexion. Chaque profil voit le Sénégal entier, mais ne modifie que son propre périmètre.
 
-| Identifiant | Profil | Périmètre de modification |
-|---|---|---|
-| `admin.national` | Administrateur général | Tout le Sénégal, gestion des comptes |
-| `coord.thies` | Administrateur régional | Région de Thiès |
-| `section.mbour` | Chef de section / coordinateur (`admin_section`) | Département de Mbour |
-| `analyste` | Analyste / lecteur | Aucune modification, pas de données nominatives |
-| `benevole.pikine` | Bénévole terrain | Actions et collecte du département de Pikine |
+| Identifiant | Mot de passe | Profil | Périmètre de modification |
+|---|---|---|---|
+| `admin` | `admin` | Administrateur général | Tout le Sénégal, gestion des comptes |
+| `admin.national` | `National2026` | Administrateur général | Tout le Sénégal, gestion des comptes |
+| `coord.thies` | `Thies2026` | Administrateur régional | Région de Thiès |
+| `coord.dakar` | `Dakar2026` | Administrateur régional | Région de Dakar |
+| `section.mbour` | `Mbour2026` | Chef de section / coordinateur (`admin_section`) | Département de Mbour |
+| `section.kaolack` | `Kaolack2026` | Chef de section / coordinateur (`admin_section`) | Département de Kaolack |
+| `analyste` | `Analyse2026` | Analyste / lecteur | Aucune modification, pas de données nominatives |
+| `benevole.pikine` | `Pikine2026` | Bénévole terrain | Actions et collecte du département de Pikine |
 
-Mot de passe de démonstration : `demo`. On peut aussi cliquer directement sur un profil.
+On peut aussi cliquer directement sur un profil dans l'écran de connexion.
 Ces comptes sont fictifs : dans le prototype, l'authentification est simulée côté navigateur. En production, elle repose sur Keycloak et les droits sont appliqués par l'API et par PostgreSQL (voir [Rôles et permissions](docs/roles-permissions.md)).
 
 ## Fonctionnalités

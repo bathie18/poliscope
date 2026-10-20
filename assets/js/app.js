@@ -192,15 +192,15 @@ window.PS = window.PS || {};
           <button class="btn primary" type="submit" style="justify-content:center">Se connecter</button>
         </form>
         <div class="label">Ou choisissez un profil de démonstration</div>
-        <div class="profiles">${PS.USERS.map((u, i) => { const r = PS.ROLES[u.role]; return `<button class="profile" data-login="${u.login}"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span><b>${esc(r.label)}</b><span>${esc(u.nom)} · ${esc(perimLabel(u))} · <span class="mono">${esc(u.login)}</span></span></span><span class="go">Entrer →</span></button>` }).join('')}</div>
-        <p class="notice">Démonstration : comptes fictifs, mot de passe <b class="mono">${PS.DEMO_PASSWORD}</b>. L’authentification réelle repose sur Keycloak (OpenID Connect) et les droits sont appliqués par l’API et la base de données.</p>
+        <div class="profiles">${PS.USERS.map((u, i) => { const r = PS.ROLES[u.role]; return `<button class="profile" data-login="${u.login}"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span><b>${esc(r.label)}</b><span>${esc(u.nom)} · ${esc(perimLabel(u))}<br><span class="mono">${esc(u.login)} / ${esc(u.password)}</span></span></span><span class="go">Entrer →</span></button>` }).join('')}</div>
+        <p class="notice">Démonstration : comptes fictifs, mot de passe affiché sous chaque profil. L’authentification réelle repose sur Keycloak (OpenID Connect) et les droits sont appliqués par l’API et la base de données.</p>
       </section>
     </div>`;
     $('#loginForm').addEventListener('submit', e => {
       e.preventDefault();
       const u = $('#lg-u').value.trim().toLowerCase(), p = $('#lg-p').value;
       if (!PS.USERS.some(x => x.login === u)) { $('#lg-err').textContent = 'Identifiant inconnu. Essayez l’un des profils de démonstration ci-dessous.'; return }
-      if (p !== PS.DEMO_PASSWORD) { $('#lg-err').textContent = `Mot de passe incorrect. En démonstration, le mot de passe est « ${PS.DEMO_PASSWORD} ».`; return }
+      if (p !== PS.USERS.find(x => x.login === u).password) { $('#lg-err').textContent = 'Mot de passe incorrect. Les mots de passe de démonstration sont indiqués sous chaque profil.'; return }
       enter(u);
     });
     $$('[data-login]').forEach(b => b.addEventListener('click', () => enter(b.dataset.login)));
