@@ -172,6 +172,47 @@ window.PS = window.PS || {};
       { t: 'Réunion des responsables de section — Mbour', type: 'Réunion de section', dep: 'Mbour', st: 'À planifier', obj: 25, done: 0, team: 'Coordination Mbour', vol: 0, date: 7, end: 7 }
     ].map((a, i) => ({ id: 'a' + (i + 1), ...a, r: (depts.find(d => d.n === a.dep) || {}).r }));
 
+    /* ---------- Historique : actions terminées sur les six derniers mois, avec bilan ---------- */
+    const RH = rng(777);
+    const HT = [['Porte-à-porte', 'Porte-à-porte', 600, 1600], ['Phoning', 'Phoning', 300, 900], ['Réunion de section', 'Réunion de section', 20, 120], ['Caravane', 'Caravane', 800, 3000], ['Tractage', 'Tractage', 1500, 5000], ['Placement de cartes', 'Placement de cartes', 300, 1800], ['Meeting', 'Meeting', 800, 4000], ['Consultation citoyenne', 'Consultation citoyenne', 200, 700]];
+    const activeDeps = depts.filter(d => d.actives > 0);
+    const QUALIF = ['Bonne mobilisation des jeunes', 'Accueil favorable dans les quartiers périphériques', 'Forte attente sur l’emploi et l’eau', 'Difficulté d’accès en fin de journée', 'Équipe réduite, à renforcer', 'Plusieurs absences : prévoir un second passage le week-end', 'Demande de réunion publique avec les élus'];
+    for (let i = 0; i < 26; i++) {
+      const d = i < 5 ? depts.find(x => x.n === ['Mbour', 'Thiès', 'Pikine', 'Kaolack', 'Mbour'][i]) : activeDeps[Math.floor(RH() * activeDeps.length)];
+      const [ty, , mn, mx] = HT[Math.floor(RH() * HT.length)];
+      const obj = Math.round((mn + RH() * (mx - mn)) / 10) * 10, done = Math.round(obj * (0.62 + RH() * 0.5));
+      const end = -(14 + Math.floor(RH() * 170)), start = end - (ty === 'Meeting' || ty === 'Réunion de section' ? 0 : 3 + Math.floor(RH() * 14));
+      const com = d.children[Math.floor(RH() * d.children.length)];
+      actions.push({ id: 'h' + (i + 1), t: `${ty} — ${com.n}`, type: ty, dep: d.n, r: d.r, commune: com.n, st: 'Terminée', obj, done, team: `Équipe ${d.n}`, vol: 4 + Math.floor(RH() * 30), date: start, end, histo: true });
+    }
+    function makeBilan(a, r) {
+      const b = { realise: a.done, resume: QUALIF[Math.floor(r() * QUALIF.length)], difficultes: r() < 0.4 ? 'Transport des équipes et disponibilité des bénévoles en semaine.' : '' };
+      if (a.type === 'Porte-à-porte' || a.type === 'Phoning') { const fav = Math.round(a.done * (0.28 + r() * 0.22)), ind = Math.round(a.done * (0.18 + r() * 0.12)), opp = Math.round(a.done * (0.08 + r() * 0.1)); Object.assign(b, { favorables: fav, indecis: ind, refus: opp, absents: Math.max(0, a.done - fav - ind - opp), nouveauxContacts: Math.round(fav * (0.35 + r() * 0.3)) }) }
+      else if (a.type === 'Placement de cartes') b.cartes = a.done;
+      else b.participants = a.done;
+      return b;
+    }
+    actions.filter(a => a.st === 'Terminée').forEach(a => { a.bilan = makeBilan(a, rng(hash(a.id))) });
+
+    /* ---------- Remontées terrain (QField, KoboToolbox, ODK, appli), rattachées aux actions ---------- */
+    const remontees = []; const RR = rng(4242);
+    const OUTILS = ['QField', 'KoboToolbox', 'ODK Collect', 'Appli PoliScope'];
+    const RES = ['Favorable', 'Favorable', 'Indécis', 'Pas intéressé', 'Absent', 'Favorable', 'Indécis', 'Absent'];
+    const collect = {};
+    function ptIn(geom, r) { const bb = bbox(geom); for (let k = 0; k < 400; k++) { const x = bb[0] + r() * (bb[2] - bb[0]), y = bb[1] + r() * (bb[3] - bb[1]); if (inGeom([x, y], geom)) return [+y.toFixed(5), +x.toFixed(5)] } return null }
+    for (const a of actions.filter(x => (x.type === 'Porte-à-porte' || x.type === 'Phoning' || x.type === 'Caravane') && x.done > 0)) {
+      const d = depts.find(x => x.n === a.dep); if (!d) continue;
+      if (!collect[a.dep]) collect[a.dep] = Array.from({ length: 4 }, () => { const p = person(RR); return `${p.prenom} ${p.nom}` });
+      const n = Math.min(40, Math.max(8, Math.round(a.done / 40)));
+      const coms = a.commune ? d.children.filter(c => c.n === a.commune) : d.children.filter(c => c.couv > 0).concat(d.children).slice(0, 4);
+      for (let k = 0; k < n; k++) {
+        const c = coms[Math.floor(RR() * coms.length)], pt = ptIn(c.geom, RR); if (!pt) continue;
+        const u = RR(), statut = u < 0.03 ? 'Doublon possible' : u < 0.055 ? 'Consentement manquant' : u < 0.07 ? 'Hors périmètre' : 'Validée';
+        const dayOff = a.st === 'Terminée' ? a.end - Math.floor(RR() * Math.max(1, a.end - a.date)) : -Math.floor(RR() * 10);
+        remontees.push({ id: 'rm' + remontees.length, action: a.id, actionT: a.t, type: a.type === 'Phoning' ? 'Phoning' : 'Porte-à-porte', dep: a.dep, r: a.r, commune: c.n, lat: pt[0], lng: pt[1], resultat: a.type === 'Phoning' ? ['Viendra', 'À rappeler', 'Refus', 'Pas de réponse'][Math.floor(RR() * 4)] : RES[Math.floor(RR() * RES.length)], outil: a.type === 'Phoning' ? 'Appli PoliScope' : OUTILS[Math.floor(RR() * 3)], collecteur: collect[a.dep][Math.floor(RR() * 4)], jour: dayOff, statut, consent: statut !== 'Consentement manquant' && RR() < 0.55 });
+      }
+    }
+
     const campaigns = [
       { id: 'm1', nom: 'Invitation meeting Saint-Louis', canal: 'WhatsApp', cible: 'Sympathisants + militants — Saint-Louis', r: 'Saint-Louis', env: 4820, deliv: 4610, rep: 612, st: 'Envoyée', date: -2 },
       { id: 'm2', nom: 'Rappel renouvellement des cartes 2026', canal: 'SMS', cible: 'Militants carte 2025 — national', r: null, env: 11240, deliv: 10802, rep: 1390, st: 'Envoyée', date: -9 },
@@ -202,6 +243,6 @@ window.PS = window.PS || {};
 
     const all = [...regions, ...depts, ...communes];
     const byId = Object.fromEntries(all.map(u => [u.id, u]));
-    return { REG, regions, depts, communes, sections, hq, coordsReg, coordsDep, contacts, actions, campaigns, events, volunteers, audit, TAGS, TYPES, byId, inGeom, bbox, hash, rng };
+    return { REG, regions, depts, communes, sections, hq, coordsReg, coordsDep, contacts, actions, remontees, makeBilan, campaigns, events, volunteers, audit, TAGS, TYPES, byId, inGeom, bbox, hash, rng };
   };
 })(window.PS);

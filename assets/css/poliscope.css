@@ -365,25 +365,25 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* ---------- Connexion ---------- */
-.login{min-height:100vh;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);background:var(--bg)}
-.login .hero{background:var(--rail);color:var(--rail-ink);padding-block:48px;padding-left:max(40px,env(safe-area-inset-left,0px));padding-right:40px;display:flex;flex-direction:column;gap:22px;position:relative;overflow:hidden}
-.login .hero canvas{position:absolute;inset:auto -70px -60px auto;width:min(470px,62%);opacity:.6;pointer-events:none}
-.login .hero h1{color:#fff;font-size:clamp(30px,4vw,44px);line-height:1.05;max-width:14ch}
-.login .hero p{max-width:46ch;margin:0;color:var(--rail-ink);font-size:16px}
-.login .hero ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;max-width:42ch;position:relative;z-index:1}
-.login .hero li{display:flex;gap:10px;font-size:14.5px}
-.login .hero li b{color:#f6d48a;font-family:var(--f-mono);font-weight:600;width:20px;flex:none}
-.login .form{padding-block:48px;padding-left:40px;padding-right:max(40px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px;justify-content:center;max-width:560px}
-.login .form h2{font-size:24px}
-.login form{display:grid;gap:12px}
-.profiles{display:grid;gap:8px}
-.profile{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:12px;align-items:center;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 12px;cursor:pointer;color:var(--ink)}
-.profile:hover{border-color:var(--teal);box-shadow:var(--shadow)}
-.profile .avatar{width:40px;height:40px;color:#fff;font-size:13px}
-.profile b{display:block;font-size:14.5px}
-.profile span{font-size:12.5px;color:var(--ink-3)}
-.profile .go{font-size:12px;color:var(--teal);font-weight:600;white-space:nowrap}
+/* ---------- Connexion : carte du Sénégal en fond, encart centré ---------- */
+.login{position:relative;min-height:100vh;background:#0a1918;color:#c9dcda;overflow:hidden;display:flex;flex-direction:column}
+#loginMap{position:absolute;inset:0;width:100%;height:100%;display:block}
+.login-veil{position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 50% 50%,rgba(10,25,24,.30) 0%,rgba(10,25,24,.78) 70%,rgba(10,25,24,.95) 100%);pointer-events:none}
+.login-inner{position:relative;z-index:1;flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,400px) minmax(0,1fr);gap:48px;align-items:center;padding-block:40px;padding-left:max(32px,env(safe-area-inset-left,0px));padding-right:max(32px,env(safe-area-inset-right,0px))}
+.login-desc{justify-self:end;max-width:430px;display:flex;flex-direction:column;gap:18px;text-shadow:0 1px 12px rgba(0,0,0,.6)}
+.login-desc .brand b{font-size:20px}
+.login-desc h1{color:#fff;font-size:clamp(28px,3vw,40px);line-height:1.08}
+.login-desc p{margin:0;font-size:16px;color:#d6e6e4}
+.login-desc ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+.login-desc li{display:flex;gap:12px;font-size:14.5px;color:#d6e6e4}
+.login-desc li b{color:#f6d48a;font-family:var(--f-mono);font-weight:600;width:20px;flex:none}
+.login-card{background:var(--surface);color:var(--ink);border-radius:14px;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.06);display:flex;flex-direction:column;gap:16px}
+.login-card h2{font-size:22px}
+.login-card form{display:grid;gap:12px}
+.login-card .btn.primary{justify-content:center;padding-block:10px;font-size:15px}
+.login-card .field input{padding:10px 11px;font-size:15px}
+.login-spacer{min-width:0}
+.login-foot{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:6px 24px;justify-content:space-between;padding-block:14px;padding-left:max(32px,env(safe-area-inset-left,0px));padding-right:max(32px,env(safe-area-inset-right,0px));font-size:12px;color:#7fa3a0;border-top:1px solid rgba(201,220,218,.12)}
 .err{color:var(--coral);font-size:13px;min-height:1em}
 .usermenu{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--rail-ink)}
 .usermenu .avatar{width:30px;height:30px;font-size:11px}
@@ -399,10 +399,76 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .checks label{display:flex;gap:8px;align-items:center}
 .checks input{accent-color:var(--teal)}
 @media (max-width:980px){
-  .login{grid-template-columns:minmax(0,1fr)}
-  .login .hero{padding-block:28px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-  .login .hero canvas{display:none}
-  .login .form{padding-block:24px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
   .report-grid{grid-template-columns:minmax(0,1fr)}
   .usermenu .who{display:none}
 }
+
+@media (max-width:1100px){
+  .login-inner{grid-template-columns:minmax(0,440px);justify-content:center;gap:28px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .login-desc{justify-self:stretch;max-width:none}
+  .login-spacer{display:none}
+  .login-foot{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+}
+@media (max-width:640px){.login-desc ul{display:none}.login-card{padding:22px}}
+
+/* ---------- Session de test (administrateur) ---------- */
+.impbar{display:flex;align-items:center;gap:10px;background:#f6d48a;color:#2a1d02;border-radius:8px;padding:5px 6px 5px 12px;font-size:13px;white-space:nowrap;min-width:0}
+.impbar span{overflow:hidden;text-overflow:ellipsis}
+.impbar button{border:0;background:#2a1d02;color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12.5px}
+
+/* ---------- Onglets ---------- */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.tabs button{border:0;background:transparent;padding:10px 14px;font-size:14px;color:var(--ink-2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--teal)}
+.perm-tbl th.perm{writing-mode:vertical-rl;transform:rotate(180deg);text-align:left;padding:8px 4px;height:120px;font-size:10.5px;vertical-align:bottom}
+.perm-tbl td.perm{text-align:center;padding:6px 4px}
+.perm-tbl input[type=checkbox]{accent-color:var(--teal);width:16px;height:16px}
+.perm-tbl select{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12.5px}
+.kpis-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.kpis-4 .kpi:nth-child(4){border-right:0}
+.panel .kpis-4{border:0;box-shadow:none;border-bottom:1px solid var(--line);border-radius:0}
+.flabel{font-size:12.5px;color:var(--ink-2);font-weight:600}
+
+/* ---------- Messages : canaux et vocal ---------- */
+.seg.chan button{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 10px;font-size:13.5px}
+.ch-cell{display:inline-flex;align-items:center;gap:6px}
+.voice{display:grid;gap:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px}
+.vopt{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);cursor:pointer}
+.vopt>span{display:flex;flex-direction:column;gap:2px;font-size:14px}
+.vopt input{margin-top:3px;accent-color:var(--teal)}
+.rec{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.rec audio{flex:1;min-width:0}
+.micbtn{width:60px;height:60px;border-radius:50%;border:0;background:var(--teal);color:#fff;display:grid;place-items:center;cursor:pointer;flex:none;box-shadow:var(--shadow)}
+.micbtn:hover{filter:brightness(1.08)}
+.micbtn.on{background:var(--coral);animation:pulse 1.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(196,83,58,.55)}100%{box-shadow:0 0 0 16px rgba(196,83,58,0)}}
+
+/* ---------- Rapports ---------- */
+.scale-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.scale-tiles button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;border:1px solid var(--line);background:var(--surface-2);border-radius:9px;padding:10px 12px;cursor:pointer;text-align:left}
+.scale-tiles button b{font-size:14px}
+.scale-tiles button span{font-size:12px;color:var(--ink-3)}
+.scale-tiles button[aria-pressed="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+.scale-tiles button[aria-pressed="true"] span{color:#ffffffcc}
+.search{position:relative}
+.search input{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:14.5px}
+.sr{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;background:var(--surface);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);overflow:hidden}
+.sr:empty{display:none}
+.sr-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);padding:8px 12px 4px}
+.sr button{display:flex;width:100%;justify-content:space-between;gap:10px;border:0;background:transparent;text-align:left;padding:8px 12px;cursor:pointer;font-size:14px}
+.sr button:hover,.sr button.first{background:var(--surface-2)}
+.terr-card{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface-2)}
+.model-cards{display:grid;gap:8px}
+.mcard{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border:1px solid var(--line);border-radius:9px;cursor:pointer}
+.mcard:has(input:checked){border-color:var(--teal);background:var(--teal-soft)}
+.mcard>span{display:flex;flex-direction:column;gap:2px;font-size:14px}
+.mcard input{margin-top:3px;accent-color:var(--teal)}
+
+/* ---------- Actions : bilan ---------- */
+.bilan{display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--surface-2);font-size:14px}
+
+/* ---------- Collecte : import ---------- */
+.drop{display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:center;text-align:center;border:2px dashed var(--line);border-radius:10px;padding:22px;cursor:pointer;background:var(--surface-2)}
+.drop:hover{border-color:var(--teal)}
+@media (max-width:980px){.kpis-4{grid-template-columns:repeat(2,minmax(0,1fr))}.kpis-4 .kpi:nth-child(2){border-right:0}.kpis-4 .kpi:nth-child(-n+2){border-bottom:1px solid var(--line)}.impbar span{display:none}}

@@ -34,8 +34,17 @@ Le prototype définit ces profils dans `assets/js/config.js` (`PS.ROLES`, `PS.US
 | Actions terrain | ● | ● région | ● département | ○ | ● département |
 | Collecte terrain | ● | ● | ● | ○ | ● |
 | Messages | ● | ● région | ● département | ○ | ○ |
-| Rapports PDF & exports | ● | ● | ● | ◐ (sans nominatif) | ○ |
+| Rapports | ● | ● | ● | ◐ (sans nominatif) | ○ |
 | Administration | ● | ◐ | ○ | ○ | ○ |
+
+## Console d'administration
+
+L'administrateur général gère, dans **Administration** :
+- les **comptes** : création, modification, désactivation, suppression, réinitialisation du mot de passe ;
+- les **rôles et permissions** : modules accessibles, périmètre de modification, accès aux données nominatives, création de rôles ;
+- le **test d'un profil** (« Tester ce profil ») pour vérifier ce qu'un compte voit, avec retour à son propre compte.
+
+Dans le prototype, ces réglages sont enregistrés dans le navigateur (« Réinitialiser la démo » rétablit l'état d'origine). En production, ils sont écrits dans Keycloak et appliqués par l'API et la base.
 
 ## Production : Keycloak + Row-Level Security
 

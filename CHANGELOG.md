@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 0.3.0 — 21 octobre 2026
+- **Accueil** : carte du Sénégal en fond, encart de connexion au centre, description du produit ; les profils de démonstration ne sont plus affichés.
+- **Administration** : gestion des comptes (création, modification, désactivation, suppression), des rôles et des permissions (modules, périmètre, données nominatives, nouveaux rôles), « Tester ce profil » avec retour au compte administrateur, journal.
+- **Actions** : clôture avec fiche bilan, onglet « Historique et bilans » filtrable avec export CSV, historique sur la fiche des territoires, section « Actions terminées » dans le PDF ; les changements d'état sont conservés.
+- **Collecte terrain** : appli reliée aux actions, liste des remontées, file de validation, import de fichiers KoboToolbox / ODK (CSV) et QField (GeoJSON) avec fichier d'exemple, statistiques par collecteur, couche « Remontées terrain » sur la carte.
+- **Rapports** : menu renommé ; choix de l'échelle (régions, départements, communes) et recherche de la localité, quatre modèles, historique des rapports générés.
+- **Messages** : icônes de canal ; canal vocal avec enregistrement au micro ou import d'un fichier audio, appel automatisé ou note vocale WhatsApp, choix de la langue.
+
 ## 0.2.0 — 20 octobre 2026
 - Écran de connexion et cinq profils : administrateur général, administrateur régional, chef de section (`admin_section`), analyste, bénévole. Chaque profil voit tout le Sénégal et ne modifie que son périmètre.
 - Carte : fond OpenStreetMap ou blanc, **échelle communale** (433 communes), panneaux **Couches** et **Légende** intégrés à la carte, couches non cochées par défaut.

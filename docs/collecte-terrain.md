@@ -40,6 +40,19 @@ flowchart LR
    - périmètre (un bénévole ne peut pas saisir hors de son département).
 4. Les vues d'indicateurs sont rafraîchies : tendance d'activité, couverture communale, statut des sections.
 
+## Dans l'application (onglet « Collecte terrain »)
+
+| Onglet | Rôle |
+|---|---|
+| Appli terrain | Saisie hors ligne rattachée à une action, puis synchronisation : le réalisé de l'action avance |
+| Remontées | Toutes les fiches (outil, collecteur, résultat, contrôle), filtrables |
+| À valider | Fiches signalées par les contrôles, à valider ou rejeter par un responsable du périmètre |
+| Importer un fichier | Export CSV KoboToolbox / ODK ou GeoJSON QField ; reconnaissance automatique des colonnes (`_position_latitude`, `_position_longitude`, `position`, `latitude`, `longitude`, `resultat`, `start`, `_submission_time`, `agent`, `_submitted_by`…) |
+| Collecteurs | Volume, accueil favorable, fiches à vérifier par collecteur |
+| Outils et formulaires | Présentation des outils et des formulaires fournis |
+
+Les fiches validées alimentent la couche **Remontées terrain** de la carte, la tendance d'activité et le pré-remplissage du **bilan** à la clôture d'une action.
+
 ## Bonnes pratiques terrain
 
 - Préparer un **secteur** sur la carte PoliScope (« Zone d'action ») avant chaque sortie. Il est exporté vers le projet QField de l'équipe.

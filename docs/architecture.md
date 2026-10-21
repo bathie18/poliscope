@@ -50,6 +50,7 @@ flowchart LR
 | Interface web | Leaflet (BSD-2), JavaScript | Carte, tableaux de bord, modules ; base de ce prototype |
 | Collecte | QField / QFieldCloud (GPL-2), KoboToolbox (AGPL-3), ODK Central (Apache-2.0) | Saisie hors ligne, géolocalisation, photos |
 | Rapports | WeasyPrint (BSD-3) côté serveur ; jsPDF (MIT) dans le prototype | Rapport territorial PDF |
+| Messages vocaux | Asterisk (GPL-2) + trunk SIP d'un opérateur | Appels automatisés diffusant un message enregistré, confirmation par touche |
 | Stockage objet | MinIO (AGPL-3) | Photos de permanences, pièces jointes, rapports archivés |
 | Exploitation | Docker, Nginx (BSD-2), pgBackRest (MIT), Prometheus / Grafana (Apache-2.0 / AGPL-3) | Déploiement, sauvegardes, supervision |
 

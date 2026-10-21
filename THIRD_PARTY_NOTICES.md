@@ -21,4 +21,4 @@ Tous les composants embarqués dans ce dépôt sont open source. Les licences co
 
 ## Outils cités (non embarqués)
 
-PostgreSQL, PostGIS, FastAPI, Keycloak, Martin, MinIO, Nginx, QField / QFieldCloud, KoboToolbox, ODK Central, WeasyPrint, pgBackRest : tous sous licence open source (voir [docs/architecture.md](docs/architecture.md)).
+PostgreSQL, PostGIS, FastAPI, Keycloak, Martin, MinIO, Nginx, Asterisk, QField / QFieldCloud, KoboToolbox, ODK Central, WeasyPrint, pgBackRest : tous sous licence open source (voir [docs/architecture.md](docs/architecture.md)).
