@@ -57,15 +57,38 @@ window.PS = window.PS || {};
   const editScopeText = () => PS.role.edit === 'national' ? 'tout le territoire' : (PS.role.edit === 'aucun' ? 'aucune modification (lecture seule)' : perimLabel());
   PS.editScopeText = editScopeText;
   PS.lockHTML = (what = 'Lecture seule') => `<div class="lock"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>${esc(what)} : votre profil (${esc(PS.role.court)}) peut modifier ${esc(editScopeText())}.</span></div>`;
+  const ADMKEY = 'poliscope-admin-v1', IMPKEY = 'poliscope-imp';
+  const DEF_USERS = JSON.parse(JSON.stringify(PS.USERS)), DEF_ROLES = JSON.parse(JSON.stringify(PS.ROLES));
+  function loadAdmin() { try { const a = JSON.parse(localStorage.getItem(ADMKEY) || 'null'); if (a && Array.isArray(a.users) && a.users.length) PS.USERS = a.users; if (a && a.roles && a.roles.admin_general) PS.ROLES = a.roles } catch (e) { } }
+  PS.saveAdmin = () => { try { localStorage.setItem(ADMKEY, JSON.stringify({ users: PS.USERS, roles: PS.ROLES })) } catch (e) { } };
+  PS.resetAdmin = () => { PS.USERS = JSON.parse(JSON.stringify(DEF_USERS)); PS.ROLES = JSON.parse(JSON.stringify(DEF_ROLES)); try { localStorage.removeItem(ADMKEY) } catch (e) { } };
+  PS.impersonator = null;
+  PS.isAdminGeneral = () => !!PS.user && PS.user.role === 'admin_general';
   function signIn(login) {
-    const u = PS.USERS.find(x => x.login === login); if (!u) return false;
+    const u = PS.USERS.find(x => x.login === login); if (!u || u.actif === false || !PS.ROLES[u.role]) return false;
     PS.user = u; PS.role = PS.ROLES[u.role];
     try { sessionStorage.setItem(SKEY, login) } catch (e) { }
     S.focus = defaultFocus(); S.secFilter.mine = PS.role.edit !== 'national' && PS.role.edit !== 'aucun'; S.actMine = S.secFilter.mine;
     S.map.sel = null; S.map.level = u.perimetre.type === 'national' ? 'reg' : (u.perimetre.type === 'region' ? 'dep' : 'com');
+    if (S.report) S.report.terr = null;
     return true;
   }
-  function signOut() { try { sessionStorage.removeItem(SKEY) } catch (e) { } PS.user = null; PS.role = null; if (PS.mapDestroy) PS.mapDestroy(); renderLogin() }
+  function signOut() { try { sessionStorage.removeItem(SKEY); sessionStorage.removeItem(IMPKEY) } catch (e) { } PS.user = null; PS.role = null; PS.impersonator = null; if (PS.mapDestroy) PS.mapDestroy(); renderLogin() }
+  PS.impersonate = function (login) {
+    const orig = PS.impersonator || PS.user;
+    if (orig.role !== 'admin_general') { PS.toast('Seul un administrateur général peut changer de profil.'); return }
+    const target = PS.USERS.find(x => x.login === login);
+    if (!target || target.actif === false) { PS.toast('Ce compte est désactivé : activez-le avant de l’utiliser.'); return }
+    PS.log(`a ouvert une session de test en tant que ${target.nom} (${PS.ROLES[target.role].label})`);
+    if (!signIn(login)) { PS.toast('Impossible d’ouvrir ce compte : son rôle n’existe plus.'); return }
+    PS.impersonator = orig; try { sessionStorage.setItem(IMPKEY, orig.login) } catch (e) { }
+    shell(); go(PS.role.modules[0]); PS.toast(`Vous naviguez en tant que ${target.nom} (${PS.role.label}).`);
+  };
+  PS.stopImpersonation = function () {
+    const o = PS.impersonator; if (!o) return;
+    PS.impersonator = null; try { sessionStorage.removeItem(IMPKEY) } catch (e) { }
+    signIn(o.login); S.adminTab = 'comptes'; shell(); go('admin'); PS.toast(`Retour à votre compte : ${o.nom}.`);
+  };
   function defaultFocus() { const p = PS.user.perimetre; if (p.type === 'region') return PS.D.regions.find(r => r.n === p.nom).id; if (p.type === 'departement') return PS.D.depts.find(d => d.n === p.nom).id; return 'nat' }
 
   /* ================= Territoires ================= */
@@ -171,49 +194,65 @@ window.PS = window.PS || {};
   function renderLogin() {
     document.getElementById('app').innerHTML = `
     <div class="login">
-      <section class="hero">
-        <div class="brand">${PS.logoSVG(38)}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
-        <h1>Le poste de pilotage territorial des partis et coalitions.</h1>
-        <p>Voir le territoire, organiser le maillage, prioriser l’action. Une plateforme cartocentrée alimentée par les résultats CivicScope et les remontées terrain.</p>
-        <ul>
-          <li><b>01</b><span>Maillage : sièges, coordinations, sections et antennes, de la région à la commune.</span></li>
-          <li><b>02</b><span>Intelligence territoriale : résultats, participation, population, accessibilité.</span></li>
-          <li><b>03</b><span>Actions terrain : porte-à-porte, phoning, caravanes, collecte QField / KoboToolbox / ODK.</span></li>
-          <li><b>04</b><span>Décision : score de priorité, scénarios, rapports PDF par territoire.</span></li>
-        </ul>
-        <canvas id="heroMap" width="560" height="440" aria-hidden="true"></canvas>
-      </section>
-      <section class="form">
-        <div><div class="label">Connexion</div><h2>Accéder à l’espace du parti</h2></div>
-        <form id="loginForm" autocomplete="off">
-          <div class="field"><label for="lg-u">Identifiant</label><input id="lg-u" name="u" placeholder="ex. section.mbour" autocomplete="username"></div>
-          <div class="field"><label for="lg-p">Mot de passe</label><input id="lg-p" name="p" type="password" autocomplete="current-password"></div>
-          <div class="err" id="lg-err" role="alert"></div>
-          <button class="btn primary" type="submit" style="justify-content:center">Se connecter</button>
-        </form>
-        <div class="label">Ou choisissez un profil de démonstration</div>
-        <div class="profiles">${PS.USERS.map((u, i) => { const r = PS.ROLES[u.role]; return `<button class="profile" data-login="${u.login}"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span><b>${esc(r.label)}</b><span>${esc(u.nom)} · ${esc(perimLabel(u))}<br><span class="mono">${esc(u.login)} / ${esc(u.password)}</span></span></span><span class="go">Entrer →</span></button>` }).join('')}</div>
-        <p class="notice">Démonstration : comptes fictifs, mot de passe affiché sous chaque profil. L’authentification réelle repose sur Keycloak (OpenID Connect) et les droits sont appliqués par l’API et la base de données.</p>
-      </section>
+      <canvas id="loginMap" aria-hidden="true"></canvas><div class="login-veil"></div>
+      <div class="login-inner">
+        <section class="login-desc">
+          <div class="brand">${PS.logoSVG(38)}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
+          <h1>Le poste de pilotage territorial des partis et coalitions.</h1>
+          <p>Voir le territoire, organiser le maillage, prioriser l’action. Une plateforme cartocentrée alimentée par les résultats CivicScope et les remontées terrain.</p>
+          <ul>
+            <li><b>01</b><span>Maillage : sièges, coordinations, sections et antennes, de la région à la commune.</span></li>
+            <li><b>02</b><span>Intelligence territoriale : résultats, participation, population, accessibilité.</span></li>
+            <li><b>03</b><span>Actions terrain : porte-à-porte, phoning, caravanes, remontées de terrain.</span></li>
+            <li><b>04</b><span>Décision : score de priorité, scénarios, rapports PDF par territoire.</span></li>
+          </ul>
+        </section>
+        <section class="login-card" aria-labelledby="lgTitle">
+          <div class="label">Connexion</div>
+          <h2 id="lgTitle">Accéder à l’espace du parti</h2>
+          <form id="loginForm" autocomplete="on" novalidate>
+            <div class="field"><label for="lg-u">Identifiant</label><input id="lg-u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+            <div class="field"><label for="lg-p">Mot de passe</label><input id="lg-p" name="password" type="password" autocomplete="current-password" required></div>
+            <div class="err" id="lg-err" role="alert"></div>
+            <button class="btn primary" type="submit">Se connecter</button>
+          </form>
+          <p class="small muted" style="margin:0">Vos identifiants vous sont remis par l’administrateur de votre parti. Mot de passe oublié : contactez-le.</p>
+        </section>
+        <div class="login-spacer" aria-hidden="true"></div>
+      </div>
+      <footer class="login-foot"><span>PoliScope © CEGIT — Centre d’Expertise en Géomatique et Ingénierie Territoriale</span><span>Version de démonstration · données du parti fictives</span></footer>
     </div>`;
     $('#loginForm').addEventListener('submit', e => {
       e.preventDefault();
-      const u = $('#lg-u').value.trim().toLowerCase(), p = $('#lg-p').value;
-      if (!PS.USERS.some(x => x.login === u)) { $('#lg-err').textContent = 'Identifiant inconnu. Essayez l’un des profils de démonstration ci-dessous.'; return }
-      if (p !== PS.USERS.find(x => x.login === u).password) { $('#lg-err').textContent = 'Mot de passe incorrect. Les mots de passe de démonstration sont indiqués sous chaque profil.'; return }
-      enter(u);
+      const login = $('#lg-u').value.trim().toLowerCase(), p = $('#lg-p').value, err = $('#lg-err');
+      if (!login || !p) { err.textContent = 'Saisissez votre identifiant et votre mot de passe.'; return }
+      const u = PS.USERS.find(x => x.login === login);
+      if (!u || u.password !== p) { err.textContent = 'Identifiant ou mot de passe incorrect.'; $('#lg-p').select(); return }
+      if (u.actif === false) { err.textContent = 'Ce compte est désactivé. Contactez l’administrateur de votre parti.'; return }
+      enter(login);
     });
-    $$('[data-login]').forEach(b => b.addEventListener('click', () => enter(b.dataset.login)));
-    drawHero();
+    $('#lg-u').focus();
+    drawLoginMap();
   }
-  function drawHero() {
-    const cv = $('#heroMap'); if (!cv || !cv.getContext) return; const g = cv.getContext('2d');
-    const B = [-17.6, 12.25, -11.3, 16.75], W = cv.width, H = cv.height, k = Math.min(W / (B[2] - B[0]), H / (B[3] - B[1]) / 1.03);
-    const P = ([x, y]) => [(x - B[0]) * k, H - (y - B[1]) * k * 1.03];
-    const path = geom => { const ps = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates; g.beginPath(); for (const p of ps) for (const ring of p) ring.forEach((pt, i) => { const [x, y] = P(pt); i ? g.lineTo(x, y) : g.moveTo(x, y) }); };
-    for (const d of PS.D.depts) { path(d.geom); g.fillStyle = 'rgba(255,255,255,.04)'; g.fill(); g.strokeStyle = 'rgba(201,220,218,.28)'; g.lineWidth = 1; g.stroke() }
-    for (const s of PS.D.sections) { const [x, y] = P([s.lng, s.lat]); g.beginPath(); g.arc(x, y, 1.8, 0, 7); g.fillStyle = s.statut === 'Active' ? '#3fb6b1' : (s.statut === 'À relancer' ? '#e3a83a' : '#e7795f'); g.fill() }
+  function drawLoginMap() {
+    const cv = $('#loginMap'); if (!cv || !cv.getContext) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr; const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const B = [-17.6, 12.25, -11.3, 16.75], kx = Math.cos(14.5 * Math.PI / 180);
+    const k = Math.min(W * 0.96 / ((B[2] - B[0]) * kx), H * 0.92 / (B[3] - B[1]));
+    const ox = (W - (B[2] - B[0]) * kx * k) / 2, oy = (H - (B[3] - B[1]) * k) / 2;
+    const P = ([x, y]) => [ox + (x - B[0]) * kx * k, H - oy - (y - B[1]) * k];
+    const path = geom => { const ps = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates; g.beginPath(); for (const p of ps) for (const ring of p) { ring.forEach((pt, i) => { const [x, y] = P(pt); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath() } };
+    g.clearRect(0, 0, W, H);
+    const tint = { bastion: 'rgba(63,182,177,.20)', concurrentielle: 'rgba(201,220,218,.07)', renforcer: 'rgba(227,168,58,.16)', conquerir: 'rgba(141,155,245,.13)' };
+    for (const c of PS.D.communes) { path(c.geom); g.fillStyle = tint[PS.typo(c)]; g.fill('evenodd'); g.strokeStyle = 'rgba(201,220,218,.12)'; g.lineWidth = 0.6; g.stroke() }
+    for (const d of PS.D.depts) { path(d.geom); g.strokeStyle = 'rgba(201,220,218,.22)'; g.lineWidth = 0.9; g.stroke() }
+    for (const r of PS.D.regions) { path(r.geom); g.strokeStyle = 'rgba(201,220,218,.45)'; g.lineWidth = 1.4; g.stroke() }
+    const col = { 'Active': '63,182,177', 'À relancer': '227,168,58', 'Inactive': '231,121,95' };
+    for (const s of PS.D.sections) { const [x, y] = P([s.lng, s.lat]); g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = `rgba(${col[s.statut]},.18)`; g.fill(); g.beginPath(); g.arc(x, y, 1.9, 0, 7); g.fillStyle = `rgba(${col[s.statut]},.95)`; g.fill() }
+    for (const c of PS.D.coordsReg) { const [x, y] = P([c.lng, c.lat]); g.strokeStyle = 'rgba(227,168,58,.9)'; g.lineWidth = 1.5; g.strokeRect(x - 4, y - 4, 8, 8) }
   }
+  let lmT; window.addEventListener('resize', () => { clearTimeout(lmT); lmT = setTimeout(() => { if (!PS.user && $('#loginMap')) drawLoginMap() }, 150) });
   function enter(login) { if (!signIn(login)) return; PS.log('s’est connecté·e'); shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]); PS.toast(`Bienvenue ${PS.user.nom}. Profil : ${PS.role.label}.`) }
 
   /* ================= Shell ================= */
@@ -229,12 +268,13 @@ window.PS = window.PS || {};
   };
   const ic = k => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
   function shell() {
-    const u = PS.user, i = PS.USERS.indexOf(u);
+    const u = PS.user, i = Math.max(0, PS.USERS.indexOf(u));
     document.getElementById('app').innerHTML = `
     <div class="app">
       <header class="topbar">
         <div class="brand">${PS.logoSVG()}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
         <span class="demo-tag" title="Les données du parti sont simulées">Démo · données fictives</span>
+        ${PS.impersonator ? `<div class="impbar" role="status"><span>Session de test : <b>${esc(u.nom)}</b> · ${esc(PS.role.label)}</span><button id="impBack">Revenir à mon compte</button></div>` : ''}
         <div class="spacer"></div>
         <div class="party"><span class="dot"></span><span>Parti fictif « Ànd Liggéey »</span></div>
         <div class="usermenu"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span class="who"><b>${esc(u.nom)}</b><span>${esc(PS.role.court)} · ${esc(perimLabel())}</span></span><button id="logout">Se déconnecter</button></div>
@@ -246,6 +286,7 @@ window.PS = window.PS || {};
       <main id="main" tabindex="-1"></main>
     </div>`;
     $('#logout').addEventListener('click', () => { PS.log('s’est déconnecté·e'); signOut() });
+    const ib = $('#impBack'); if (ib) ib.addEventListener('click', PS.stopImpersonation);
   }
   function setNav() {
     $$('.rail a').forEach(a => a.setAttribute('aria-current', a.dataset.view === S.view ? 'page' : 'false'));
@@ -617,38 +658,88 @@ window.PS = window.PS || {};
   /* =========================================================
      MESSAGES
      ========================================================= */
+  const CH_IC = {
+    'SMS': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg>',
+    'WhatsApp': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.1A8 8 0 1 1 20 11.5z"/><path d="M9 9.5c.3 2 2 3.8 4.2 4.4l1.1-1.1 1.7.8"/></svg>',
+    'Message vocal': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
+  };
+  PS.CH_IC = CH_IC;
+  const fmtDur = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   VIEWS.messages = {
     html() {
       const C = PS.CAMPAIGNS().filter(c => PS.role.edit === 'national' || !c.r || PS.canEdit({ r: c.r, dep: c.dep }));
-      const regs = PS.D.regions.filter(r => PS.canEdit(r) || PS.canEdit({ r: r.n, dep: PS.user.perimetre.nom }));
-      return `<div class="view-head"><div><div class="label">Mobilisation</div><h1>Messages et campagnes</h1><p>SMS, WhatsApp et messages vocaux vers des segments de contacts de votre périmètre (${esc(editScopeText())}). Seuls les contacts ayant donné leur accord sont comptés et contactés.</p></div></div>
+      const ch = S.msgCh || 'SMS', V = S.voice || {};
+      return `<div class="view-head"><div><div class="label">Mobilisation</div><h1>Messages et campagnes</h1><p>Informer en masse une cible de votre périmètre (${esc(editScopeText())}) par SMS, WhatsApp ou message vocal. Seuls les contacts ayant donné leur accord sont comptés et contactés.</p></div></div>
       <div class="grid g-main" style="align-items:start">
         <section class="panel"><header><h3>Campagnes</h3></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Campagne</th><th>Canal</th><th>Cible</th><th class="n">Envoyés</th><th class="n">Délivrés</th><th class="n">Réponses</th><th>Statut</th></tr></thead><tbody>
-          ${C.map(c => `<tr><td><b>${esc(c.nom)}</b><div class="small muted">${c.st === 'Programmée' ? 'prévue le ' : 'le '}${dayFmt(c.date)}</div></td><td>${esc(c.canal)}</td><td class="small">${esc(c.cible)}</td><td class="n">${c.env ? fmt(c.env) : '—'}</td><td class="n">${c.env ? Math.round(c.deliv / c.env * 100) + ' %' : '—'}</td><td class="n">${c.env ? Math.round(c.rep / c.env * 100) + ' %' : '—'}</td><td><span class="chip ${c.st === 'Envoyée' ? 's-ok' : 's-warn'}">${c.st}</span></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune campagne dans votre périmètre.</td></tr>'}</tbody></table></div></section>
+          ${C.map(c => `<tr><td><b>${esc(c.nom)}</b><div class="small muted">${c.st === 'Programmée' ? 'prévue le ' : 'le '}${dayFmt(c.date)}</div></td><td><span class="ch-cell">${CH_IC[c.canal] || ''}${esc(c.canal)}</span>${c.mode ? `<div class="small muted">${esc(c.mode)}${c.duree ? ' · ' + fmtDur(c.duree) : ''}</div>` : ''}</td><td class="small">${esc(c.cible)}</td><td class="n">${c.env ? fmt(c.env) : '—'}</td><td class="n">${c.env ? Math.round(c.deliv / c.env * 100) + ' %' : '—'}</td><td class="n">${c.env ? Math.round(c.rep / c.env * 100) + ' %' : '—'}</td><td><span class="chip ${c.st === 'Envoyée' ? 's-ok' : 's-warn'}">${c.st}</span></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune campagne dans votre périmètre.</td></tr>'}</tbody></table></div></section>
         <section class="panel"><header><h3>Nouvelle campagne</h3></header><div class="body" style="display:grid;gap:12px">
-          <div class="field"><label for="mg-n">Nom</label><input id="mg-n" placeholder="Ex. Invitation réunion de quartier"></div>
-          <div class="grid g-2"><div class="field"><label for="mg-c">Canal</label><select id="mg-c"><option>SMS</option><option>WhatsApp</option><option>Message vocal</option></select></div>
-          <div class="field"><label for="mg-s">Statut</label><select id="mg-s"><option value="">Tous</option><option>Militant</option><option>Sympathisant</option><option>Bénévole</option></select></div>
-          <div class="field" style="grid-column:1/-1"><label for="mg-t">Étiquette</label><select id="mg-t"><option value="">Toutes</option>${PS.D.TAGS.map(t => `<option>${t}</option>`).join('')}</select></div></div>
-          <div class="field"><label for="mg-m">Message</label><textarea id="mg-m">Bonjour {prénom}, la section {section} vous invite à une réunion samedi à 17 h. Répondez OUI pour confirmer.</textarea><span class="small muted" id="mg-cnt"></span></div>
+          <div class="field"><label for="mg-n">Nom</label><input id="mg-n" placeholder="Ex. Invitation réunion de quartier" value="${esc(S.msgName || '')}"></div>
+          <div class="field"><span class="flabel">Canal</span><div class="seg chan" id="mg-c" role="radiogroup" aria-label="Canal">${Object.keys(CH_IC).map(k => `<button type="button" role="radio" data-ch="${k}" aria-pressed="${ch === k}" aria-checked="${ch === k}">${CH_IC[k]}<span>${k === 'Message vocal' ? 'Vocal' : k}</span></button>`).join('')}</div></div>
+          <div class="grid g-2"><div class="field"><label for="mg-s">Statut</label><select id="mg-s"><option value="">Tous</option><option>Militant</option><option>Sympathisant</option><option>Bénévole</option></select></div>
+          <div class="field"><label for="mg-t">Étiquette</label><select id="mg-t"><option value="">Toutes</option>${PS.D.TAGS.map(t => `<option>${t}</option>`).join('')}</select></div></div>
+          ${ch === 'Message vocal' ? `
+          <div class="voice">
+            <div class="field"><span class="flabel">Mode de diffusion</span>
+              <label class="vopt"><input type="radio" name="vmode" value="Appel vocal automatisé" ${(V.mode || 'Appel vocal automatisé') === 'Appel vocal automatisé' ? 'checked' : ''}><span><b>Appel vocal automatisé</b><span class="small muted">Le serveur vocal appelle chaque contact et diffuse l’enregistrement. Fonctionne sur tous les téléphones, sans internet, pour les publics non lecteurs. Touche 1 pour confirmer sa présence.</span></span></label>
+              <label class="vopt"><input type="radio" name="vmode" value="Note vocale WhatsApp" ${V.mode === 'Note vocale WhatsApp' ? 'checked' : ''}><span><b>Note vocale WhatsApp</b><span class="small muted">L’enregistrement est envoyé comme note vocale aux contacts équipés de WhatsApp.</span></span></label>
+            </div>
+            <div class="field"><label for="mg-lang">Langue de l’enregistrement</label><select id="mg-lang">${['Wolof', 'Français', 'Pulaar', 'Sérère', 'Diola', 'Mandinka', 'Soninké'].map(l => `<option ${V.lang === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+            <div class="rec" id="mg-rec">
+              ${V.url ? `<audio controls src="${V.url}" style="width:100%"></audio><div class="row small" style="justify-content:space-between"><span class="muted">${esc(V.name || 'Enregistrement')} · ${fmtDur(V.dur || 0)}</span><button type="button" class="btn sm" id="v-clear">Supprimer et refaire</button></div>`
+          : `<button type="button" class="micbtn" id="v-rec" aria-label="Enregistrer avec le micro">${CH_IC['Message vocal'].replace(/width="16" height="16"/, 'width="26" height="26"')}</button>
+              <div><b id="v-state">Enregistrer avec le micro de l’ordinateur</b><div class="small muted" id="v-hint">Cliquez sur le micro, parlez, puis cliquez à nouveau pour arrêter. 30 à 60 secondes conseillées, 90 s au maximum.</div></div>`}
+            </div>
+            ${V.url ? '' : `<label class="btn sm" for="v-file" style="justify-self:start">Importer un fichier audio (MP3, WAV, M4A, OGG)</label><input type="file" id="v-file" accept="audio/*" hidden>`}
+          </div>` : ''}
+          <div class="field"><label for="mg-m">${ch === 'Message vocal' ? 'Script (aide à l’enregistrement, non envoyé)' : 'Message'}</label><textarea id="mg-m">${esc(S.msgText || (ch === 'Message vocal' ? 'Salam aleykoum, ici la section de votre commune. Nous vous invitons à la réunion de quartier samedi à 17 heures, à la permanence. Tapez 1 pour confirmer votre présence.' : 'Bonjour {prénom}, la section {section} vous invite à une réunion samedi à 17 h. Répondez OUI pour confirmer.'))}</textarea><span class="small muted" id="mg-cnt"></span></div>
           <div class="notice" id="mg-est"></div>
           <button class="btn primary" id="mg-ok">Programmer l’envoi</button>
         </div></section>
       </div>`;
     },
     bind() {
+      const ch = () => S.msgCh || 'SMS';
+      const keep = () => { S.msgName = $('#mg-n').value; S.msgText = $('#mg-m').value; const r = $('input[name=vmode]:checked'); if (r) { S.voice = S.voice || {}; S.voice.mode = r.value; S.voice.lang = $('#mg-lang').value } };
       const est = () => {
         const s = $('#mg-s').value, t = $('#mg-t').value;
         const base = PS.CONTACTS().filter(PS.canSeePII), seg = base.filter(c => (!s || c.role === s) && (!t || c.tags.includes(t)));
         const ok = seg.filter(c => c.consent === 'Oui').length;
         const scope = PS.user.perimetre.type === 'national' ? PS.NAT : PS.D.byId[defaultFocus()];
         const scale = Math.max(1, Math.round(scope.membres * 1.8 / Math.max(1, base.length)));
-        $('#mg-est').innerHTML = `Segment : <b>${fmt(ok * scale)}</b> destinataires estimés (consentement « Oui ») · ${fmt((seg.length - ok) * scale)} exclus faute d’accord.`;
-        const m = $('#mg-m').value, ch = $('#mg-c').value;
-        $('#mg-cnt').textContent = ch === 'SMS' ? `${m.length} caractères · ${Math.ceil(m.length / 160) || 1} SMS par destinataire` : (ch === 'Message vocal' ? 'Le texte sert de script d’enregistrement (wolof, pulaar, sérère…).' : `${m.length} caractères`);
+        const n = ok * scale, V = S.voice || {};
+        let extraTxt = '';
+        if (ch() === 'Message vocal') { const d = V.dur || 45; extraTxt = (V.mode || 'Appel vocal automatisé') === 'Appel vocal automatisé' ? ` · environ ${fmt(n * Math.ceil(d / 60))} minutes d’appel, ${Math.max(1, Math.round(n / 30 / 60))} h de diffusion avec 30 lignes simultanées.` : ' · envoi aux contacts équipés de WhatsApp.' }
+        $('#mg-est').innerHTML = `Segment : <b>${fmt(n)}</b> destinataires estimés (consentement « Oui ») · ${fmt((seg.length - ok) * scale)} exclus faute d’accord${extraTxt}`;
+        const m = $('#mg-m').value;
+        $('#mg-cnt').textContent = ch() === 'SMS' ? `${m.length} caractères · ${Math.ceil(m.length / 160) || 1} SMS par destinataire` : (ch() === 'Message vocal' ? `Lecture à voix haute : environ ${Math.max(5, Math.round(m.split(/\s+/).length / 2.3))} secondes.` : `${m.length} caractères`);
       };
-      ['mg-s', 'mg-t', 'mg-c'].forEach(i => $('#' + i).addEventListener('change', est)); $('#mg-m').addEventListener('input', est);
-      $('#mg-ok').addEventListener('click', () => { const n = $('#mg-n').value.trim(); if (!n) { $('#mg-n').focus(); PS.toast('Nommez la campagne avant de la programmer.'); return } const p = PS.user.perimetre; extra.campaigns.unshift({ id: 'mx' + Date.now(), nom: n, canal: $('#mg-c').value, cible: `${$('#mg-s').value || 'Tous statuts'}${$('#mg-t').value ? ' · ' + $('#mg-t').value : ''} — ${perimLabel()}`, r: p.type === 'region' ? p.nom : (p.type === 'departement' ? PS.D.depts.find(d => d.n === p.nom).r : null), dep: p.type === 'departement' ? p.nom : null, env: 0, deliv: 0, rep: 0, st: 'Programmée', date: 1 }); PS.log(`a programmé la campagne « ${n} »`); PS.persist(); render(); PS.toast(`Campagne « ${n} » programmée pour demain.`) });
+      $$('[data-ch]').forEach(b => b.addEventListener('click', () => { keep(); if ((S.msgCh || 'SMS') !== b.dataset.ch) S.msgText = ''; S.msgCh = b.dataset.ch; render() }));
+      ['mg-s', 'mg-t'].forEach(i => $('#' + i).addEventListener('change', est)); $('#mg-m').addEventListener('input', est);
+      $$('input[name=vmode]').forEach(r => r.addEventListener('change', () => { keep(); est() }));
+      // Enregistrement au micro (MediaRecorder) ou import de fichier
+      const setAudio = (blob, dur, name) => { keep(); if (S.voice && S.voice.url) URL.revokeObjectURL(S.voice.url); S.voice = Object.assign(S.voice || {}, { url: URL.createObjectURL(blob), dur, name }); render(); PS.toast('Enregistrement prêt : écoutez-le avant de programmer l’envoi.') };
+      const recBtn = $('#v-rec');
+      if (recBtn) recBtn.addEventListener('click', async () => {
+        if (S._rec) { S._rec.stop(); return }
+        if (!navigator.mediaDevices || !window.MediaRecorder) { PS.toast('Ce navigateur ne permet pas d’enregistrer : importez un fichier audio.'); return }
+        let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }) } catch (e) { PS.toast('Accès au micro refusé. Autorisez le micro dans le navigateur, ou importez un fichier audio.'); return }
+        const rec = new MediaRecorder(stream), chunks = [], t0 = Date.now(); S._rec = rec;
+        rec.ondataavailable = e => chunks.push(e.data);
+        rec.onstop = () => { clearInterval(S._recT); stream.getTracks().forEach(t => t.stop()); S._rec = null; setAudio(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), (Date.now() - t0) / 1000, 'Enregistrement micro') };
+        rec.start(); recBtn.classList.add('on'); $('#v-state').textContent = 'Enregistrement… 0:00'; $('#v-hint').textContent = 'Cliquez à nouveau sur le micro pour arrêter.';
+        S._recT = setInterval(() => { const s = (Date.now() - t0) / 1000; const st = $('#v-state'); if (st) st.textContent = `Enregistrement… ${fmtDur(s)}`; if (s >= 90 && S._rec) S._rec.stop() }, 250);
+      });
+      const vf = $('#v-file'); if (vf) vf.addEventListener('change', () => { const f = vf.files[0]; if (!f) return; if (!/^audio\//.test(f.type)) { PS.toast('Ce fichier n’est pas un fichier audio.'); return } const a = new Audio(URL.createObjectURL(f)); a.addEventListener('loadedmetadata', () => setAudio(f, isFinite(a.duration) ? a.duration : 0, f.name)); a.addEventListener('error', () => setAudio(f, 0, f.name)) });
+      const vc = $('#v-clear'); if (vc) vc.addEventListener('click', () => { keep(); URL.revokeObjectURL(S.voice.url); S.voice.url = null; S.voice.dur = 0; render() });
+      $('#mg-ok').addEventListener('click', () => {
+        const n = $('#mg-n').value.trim(); if (!n) { $('#mg-n').focus(); PS.toast('Nommez la campagne avant de la programmer.'); return }
+        const c = ch(), V = S.voice || {};
+        if (c === 'Message vocal' && !V.url) { PS.toast('Enregistrez le message au micro ou importez un fichier audio.'); return }
+        const p = PS.user.perimetre, mode = c === 'Message vocal' ? ($('input[name=vmode]:checked') || {}).value : null;
+        extra.campaigns.unshift({ id: 'mx' + Date.now(), nom: n, canal: c, mode: mode ? `${mode} · ${$('#mg-lang').value}` : null, duree: c === 'Message vocal' ? Math.round(V.dur || 0) : null, cible: `${$('#mg-s').value || 'Tous statuts'}${$('#mg-t').value ? ' · ' + $('#mg-t').value : ''} — ${perimLabel()}`, r: p.type === 'region' ? p.nom : (p.type === 'departement' ? PS.D.depts.find(d => d.n === p.nom).r : null), dep: p.type === 'departement' ? p.nom : null, env: 0, deliv: 0, rep: 0, st: 'Programmée', date: 1 });
+        PS.log(`a programmé la campagne « ${n} » (${c})`); PS.persist(); S.msgName = ''; S.msgText = ''; if (V.url) { URL.revokeObjectURL(V.url); S.voice = { mode: V.mode, lang: V.lang } } render(); PS.toast(`Campagne « ${n} » programmée pour demain.`);
+      });
       est();
     }
   };
@@ -689,35 +780,138 @@ window.PS = window.PS || {};
      ========================================================= */
   VIEWS.admin = {
     html() {
-      const mods = [['carte', 'Carte'], ['maillage', 'Maillage'], ['contacts', 'Contacts'], ['actions', 'Actions'], ['messages', 'Messages'], ['rapports', 'Rapports'], ['admin', 'Admin']];
-      const isAdmin = PS.user.role === 'admin_general';
-      const editLbl = { national: 'Tout le Sénégal', region: 'Sa région', departement: 'Son département', aucun: 'Aucune' };
-      const conns = [['CS', 'CivicScope', 'Résultats électoraux par scrutin : régions, départements, communes, bureaux de vote. Score, rang, participation.', 'Connecté', 's-ok'], ['QF', 'QFieldCloud', 'Synchronisation des projets QGIS terrain (sections, permanences, zones).', 'Connecté', 's-ok'], ['KB', 'KoboToolbox', 'Formulaires XLSForm (porte-à-porte, antennes, cartes).', 'Connecté', 's-ok'], ['ODK', 'ODK Central', 'Alternative auto-hébergée pour les formulaires XLSForm.', 'Disponible', 's-neutral'], ['SMS', 'Passerelle SMS (opérateur)', 'Envoi des SMS via l’API de l’opérateur, accusés de réception.', 'À configurer', 's-warn'], ['API', 'API REST PoliScope', 'FastAPI + OpenAPI : interconnexion avec les outils du parti.', 'Disponible', 's-neutral']];
-      return `<div class="view-head"><div><div class="label">Gouvernance</div><h1>Administration et sécurité</h1><p>Comptes, rôles, périmètres de modification, traçabilité et protection des données personnelles.${isAdmin ? '' : ' Consultation seule : la gestion des comptes est réservée à l’administrateur général.'}</p></div></div>
-      <div class="grid g-2" style="align-items:start">
-        <section class="panel"><header><h3>Comptes</h3><span class="right">${isAdmin ? '<button class="btn sm" id="addUser">+ Inviter</button>' : ''}</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th></tr></thead><tbody>${PS.USERS.map(u => `<tr><td><b>${esc(u.nom)}</b><div class="small muted mono">${esc(u.login)}</div></td><td>${esc(PS.ROLES[u.role].label)}</td><td>${esc(perimLabel(u))}</td></tr>`).join('')}</tbody></table></div></section>
-        <section class="panel"><header><h3>Rôles et permissions</h3><span class="sub">● complet · ◐ lecture · ○ aucun</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Rôle</th>${mods.map(m => `<th class="perm">${m[1]}</th>`).join('')}<th>Modifie</th></tr></thead><tbody>${Object.entries(PS.ROLES).map(([k, r]) => `<tr><td><b>${esc(r.label)}</b></td>${mods.map(([m]) => { const has = r.modules.includes(m); const full = has && r.edit !== 'aucun' && !(m === 'admin' && k !== 'admin_general'); return `<td class="perm">${has ? (full ? '<span class="y" title="Accès complet dans le périmètre">●</span>' : '<span class="p" title="Lecture">◐</span>') : '<span class="n" title="Aucun accès">○</span>'}</td>` }).join('')}<td class="small">${editLbl[r.edit]}</td></tr>`).join('')}</tbody></table></div>
-          <div class="body small muted">Tous les rôles consultent la carte et les indicateurs du Sénégal entier. Les modifications et les données nominatives sont limitées au périmètre du rôle (contrôle appliqué par l’API et par PostgreSQL Row-Level Security).</div></section>
-        <section class="panel"><header><h3>Journal des modifications</h3></header><div class="body feed" style="padding-block:4px;max-height:360px;overflow:auto">${PS.AUDIT().slice(0, 14).map(a => `<div class="it"><span class="t">${a.t}</span><span><b>${esc(a.u)}</b> ${esc(a.a)}</span></div>`).join('')}</div></section>
-        <section class="panel"><header><h3>Connecteurs et sources</h3></header><div class="body" style="padding-block:4px">${conns.map(c => `<div class="conn"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div><span class="chip ${c[4]}">${c[3]}</span></div>`).join('')}</div></section>
+      const can = PS.isAdminGeneral(), tab = S.adminTab || 'comptes';
+      const tabs = [['comptes', 'Comptes'], ['roles', 'Rôles et permissions'], ['journal', 'Journal'], ['connecteurs', 'Connecteurs et sécurité']];
+      return `<div class="view-head"><div><div class="label">Gouvernance</div><h1>Administration</h1><p>Gérer les comptes, les rôles et leurs permissions, suivre le journal des modifications.${can ? '' : ' Consultation seule : la gestion est réservée à l’administrateur général.'}</p></div></div>
+      <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-atab="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+      <div id="adminBody">${({ comptes: adminComptes, roles: adminRoles, journal: adminJournal, connecteurs: adminConn })[tab](can)}</div>`;
+    },
+    bind() {
+      $$('[data-atab]').forEach(b => b.addEventListener('click', () => { S.adminTab = b.dataset.atab; render() }));
+      const tab = S.adminTab || 'comptes';
+      if (tab === 'comptes') bindComptes(); if (tab === 'roles') bindRoles();
+    }
+  };
+  const MODLIST = PS.MODULES.flatMap(([, items]) => items);
+  const EDIT_LBL = { national: 'Tout le Sénégal', region: 'Sa région', departement: 'Son département', aucun: 'Aucune (lecture)' };
+  const usersOf = role => PS.USERS.filter(u => u.role === role).length;
+  function adminComptes(can) {
+    const f = S.userFilter || { q: '', role: '' };
+    return `<section class="panel"><header><div class="filters"><input type="search" id="uf-q" placeholder="Nom ou identifiant…" value="${esc(f.q)}" aria-label="Rechercher un compte"><select id="uf-r" aria-label="Rôle"><option value="">Tous les rôles</option>${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${f.role === k ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div>
+      <span class="right">${can ? '<button class="btn sm" id="u-reset" title="Revenir aux comptes et rôles d’origine">Réinitialiser la démo</button><button class="btn primary sm" id="u-new">+ Créer un compte</button>' : ''}</span></header>
+      <div class="tbl-wrap" id="u-tbl"></div></section>
+      ${can ? '<p class="small muted" style="margin-top:10px">« Tester ce profil » ouvre l’application avec les droits du compte choisi, pour vérifier ce qu’il voit et peut modifier. Un bandeau permet de revenir à votre compte.</p>' : PS.lockHTML('Gestion des comptes')}`;
+  }
+  function bindComptes() {
+    const can = PS.isAdminGeneral(); S.userFilter = S.userFilter || { q: '', role: '' };
+    const draw = () => {
+      const f = S.userFilter, q = f.q.toLowerCase(), me = (PS.impersonator || PS.user).login;
+      const rows = PS.USERS.filter(u => (!f.role || u.role === f.role) && (!q || (u.nom + ' ' + u.login).toLowerCase().includes(q)));
+      $('#u-tbl').innerHTML = `<table class="tbl"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th><th>Statut</th>${can ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(u => { const r = PS.ROLES[u.role]; return `<tr><td><b>${esc(u.nom)}</b>${u.login === me ? ' <span class="chip s-neutral">vous</span>' : ''}<div class="small muted mono">${esc(u.login)}</div></td><td>${r ? esc(r.label) : '<span class="chip s-bad">Rôle supprimé</span>'}</td><td>${esc(perimLabel(u))}</td><td><span class="chip ${u.actif === false ? 's-bad' : 's-ok'}">${u.actif === false ? 'Désactivé' : 'Actif'}</span></td>${can ? `<td><div class="row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-u-edit="${esc(u.login)}">Modifier</button>${u.login !== me ? `<button class="btn sm" data-u-imp="${esc(u.login)}" ${u.actif === false ? 'disabled' : ''}>Tester ce profil</button>` : ''}</div></td>` : ''}</tr>` }).join('') || `<tr><td colspan="5" class="muted">Aucun compte ne correspond.</td></tr>`}</tbody></table>`;
+      $$('[data-u-edit]').forEach(b => b.addEventListener('click', () => userForm(PS.USERS.find(u => u.login === b.dataset.uEdit), draw)));
+      $$('[data-u-imp]').forEach(b => b.addEventListener('click', () => PS.impersonate(b.dataset.uImp)));
+    };
+    $('#uf-q').addEventListener('input', e => { S.userFilter.q = e.target.value; draw() });
+    $('#uf-r').addEventListener('change', e => { S.userFilter.role = e.target.value; draw() });
+    const nb = $('#u-new'); if (nb) nb.addEventListener('click', () => userForm(null, draw));
+    const rs = $('#u-reset'); if (rs) rs.addEventListener('click', () => {
+      const m = PS.modal('Réinitialiser la démonstration', '<p style="margin:0">Les comptes et les rôles reviennent à leur état d’origine. Les comptes créés et les permissions modifiées seront perdus.</p>', '<button class="btn" data-close>Annuler</button><button class="btn primary" id="rs-ok">Réinitialiser</button>');
+      $('#rs-ok', m).addEventListener('click', () => { const me = (PS.impersonator || PS.user).login; PS.resetAdmin(); PS.closeModal(); PS.log('a réinitialisé les comptes et rôles de démonstration'); if (!signIn(me)) { signOut(); return } PS.impersonator = null; shell(); go('admin'); PS.toast('Comptes et rôles réinitialisés.') });
+    });
+    draw();
+  }
+  function perimField(roleKey, cur) {
+    const e = (PS.ROLES[roleKey] || {}).edit;
+    if (e === 'region') return `<div class="field"><label for="uf-pr">Région</label><select id="uf-pr">${PS.D.regions.map(r => `<option ${cur && cur.type === 'region' && cur.nom === r.n ? 'selected' : ''}>${esc(r.n)}</option>`).join('')}</select></div>`;
+    if (e === 'departement') return `<div class="field"><label for="uf-pd">Département</label><select id="uf-pd">${PS.D.regions.map(r => `<optgroup label="${esc(r.n)}">${r.children.map(d => `<option ${cur && cur.type === 'departement' && cur.nom === d.n ? 'selected' : ''}>${esc(d.n)}</option>`).join('')}</optgroup>`).join('')}</select></div>`;
+    return `<div class="field"><span class="small muted">Périmètre : Sénégal (national)${e === 'aucun' ? ', en lecture seule' : ''}.</span></div>`;
+  }
+  function userForm(u, after) {
+    const isNew = !u, me = (PS.impersonator || PS.user).login;
+    const roleKey = u ? u.role : 'admin_section';
+    const m = PS.modal(isNew ? 'Créer un compte' : `Modifier le compte ${u.nom}`, `
+      <div class="grid g-2">
+        <div class="field"><label for="uf-n">Nom complet</label><input id="uf-n" value="${esc(u ? u.nom : '')}" placeholder="Prénom Nom"></div>
+        <div class="field"><label for="uf-l">Identifiant</label><input id="uf-l" value="${esc(u ? u.login : '')}" placeholder="ex. section.thies" autocapitalize="none" spellcheck="false" ${isNew ? '' : 'readonly'}></div>
+        <div class="field"><label for="uf-p">${isNew ? 'Mot de passe' : 'Nouveau mot de passe'}</label><input id="uf-p" type="text" autocomplete="off" placeholder="${isNew ? '8 caractères minimum' : 'Laisser vide pour ne pas changer'}"></div>
+        <div class="field"><label for="uf-role">Rôle</label><select id="uf-role">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${k === roleKey ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div>
+      </div>
+      <div id="uf-perim">${perimField(roleKey, u && u.perimetre)}</div>
+      <div class="small muted" id="uf-rdesc">${esc((PS.ROLES[roleKey] || {}).desc || '')}</div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="uf-a" ${!u || u.actif !== false ? 'checked' : ''} ${u && u.login === me ? 'disabled' : ''}> Compte actif</label>
+      <p class="notice">Démonstration : les comptes sont enregistrés dans ce navigateur. En production, ils sont créés dans Keycloak et l’utilisateur reçoit un lien d’activation pour choisir son mot de passe.</p>`,
+      `${!isNew && u.login !== me ? '<button class="btn" id="uf-del" style="margin-right:auto;color:var(--coral)">Supprimer</button>' : ''}<button class="btn" data-close>Annuler</button><button class="btn primary" id="uf-ok">${isNew ? 'Créer le compte' : 'Enregistrer'}</button>`);
+    $('#uf-role', m).addEventListener('change', e => { $('#uf-perim', m).innerHTML = perimField(e.target.value, u && u.perimetre); $('#uf-rdesc', m).textContent = PS.ROLES[e.target.value].desc || '' });
+    $('#uf-ok', m).addEventListener('click', () => {
+      const nom = $('#uf-n', m).value.trim(), login = $('#uf-l', m).value.trim().toLowerCase(), pw = $('#uf-p', m).value, role = $('#uf-role', m).value;
+      if (!nom) { PS.toast('Indiquez le nom de la personne.'); return }
+      if (isNew && !/^[a-z0-9][a-z0-9._-]{2,30}$/.test(login)) { PS.toast('Identifiant : 3 à 31 caractères, lettres minuscules, chiffres, point, tiret.'); return }
+      if (isNew && PS.USERS.some(x => x.login === login)) { PS.toast(`L’identifiant « ${login} » existe déjà.`); return }
+      if (isNew && pw.length < 8 && !(login === 'admin' && pw === 'admin')) { PS.toast('Le mot de passe doit faire au moins 8 caractères.'); return }
+      if (!isNew && pw && pw.length < 8) { PS.toast('Le nouveau mot de passe doit faire au moins 8 caractères.'); return }
+      const e = PS.ROLES[role].edit;
+      const perimetre = e === 'region' ? { type: 'region', nom: $('#uf-pr', m).value } : e === 'departement' ? { type: 'departement', nom: $('#uf-pd', m).value } : { type: 'national' };
+      const actif = $('#uf-a', m).checked;
+      if (!isNew && u.role === 'admin_general' && (role !== 'admin_general' || !actif) && PS.USERS.filter(x => x.role === 'admin_general' && x.actif !== false).length <= 1) { PS.toast('Il doit rester au moins un administrateur général actif.'); return }
+      if (isNew) { PS.USERS.push({ login, password: pw, nom, role, perimetre, actif }); PS.log(`a créé le compte ${login} (${PS.ROLES[role].label})`) }
+      else { Object.assign(u, { nom, role, perimetre, actif }); if (pw) u.password = pw; PS.log(`a modifié le compte ${u.login}`) }
+      PS.saveAdmin(); PS.closeModal(); PS.toast(isNew ? `Compte ${login} créé.` : `Compte ${u.login} enregistré.`);
+      if (!isNew && u.login === PS.user.login) { PS.role = PS.ROLES[u.role]; shell(); go('admin'); return }
+      after();
+    });
+    const del = $('#uf-del', m); if (del) del.addEventListener('click', () => {
+      if (u.role === 'admin_general' && PS.USERS.filter(x => x.role === 'admin_general').length <= 1) { PS.toast('Impossible de supprimer le dernier administrateur général.'); return }
+      del.outerHTML = `<span style="margin-right:auto;display:flex;gap:6px;align-items:center" class="small">Supprimer définitivement ? <button class="btn sm" id="uf-del2" style="color:var(--coral)">Confirmer</button></span>`;
+      $('#uf-del2', m).addEventListener('click', () => { PS.USERS = PS.USERS.filter(x => x !== u); PS.saveAdmin(); PS.log(`a supprimé le compte ${u.login}`); PS.closeModal(); PS.toast(`Compte ${u.login} supprimé.`); after() });
+    });
+  }
+  function adminRoles(can) {
+    const head = MODLIST.map(([k, l]) => `<th class="perm" title="${esc(l)}">${esc(l.replace(' & ', ' '))}</th>`).join('');
+    return `<section class="panel"><header><h3>Permissions par rôle</h3><span class="sub">cochez les modules accessibles ; la modification reste limitée au périmètre</span><span class="right">${can ? '<button class="btn sm" id="r-new">+ Créer un rôle</button><button class="btn primary sm" id="r-save">Enregistrer les permissions</button>' : ''}</span></header>
+      <div class="tbl-wrap"><table class="tbl perm-tbl"><thead><tr><th>Rôle</th>${head}<th>Modification</th><th class="perm">Données nominatives</th><th class="n">Comptes</th>${can ? '<th></th>' : ''}</tr></thead><tbody>
+      ${Object.entries(PS.ROLES).map(([k, r]) => { const lock = !can || k === 'admin_general'; return `<tr data-role="${k}"><td><b>${esc(r.label)}</b><div class="small muted mono">${esc(k)}</div></td>${MODLIST.map(([m]) => `<td class="perm"><input type="checkbox" data-mod="${m}" aria-label="${esc(r.label)} : ${esc(m)}" ${r.modules.includes(m) ? 'checked' : ''} ${lock ? 'disabled' : ''}></td>`).join('')}<td><select data-edit ${lock ? 'disabled' : ''} aria-label="Périmètre de modification">${Object.entries(EDIT_LBL).map(([e, l]) => `<option value="${e}" ${r.edit === e ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td class="perm"><input type="checkbox" data-pii ${r.pii ? 'checked' : ''} ${lock ? 'disabled' : ''} aria-label="Données nominatives"></td><td class="n">${usersOf(k)}</td>${can ? `<td>${r.custom ? `<button class="btn sm" data-r-del="${k}" ${usersOf(k) ? 'disabled title="Rôle attribué à des comptes"' : ''}>Supprimer</button>` : ''}</td>` : ''}</tr>` }).join('')}
+      </tbody></table></div>
+      <div class="body small muted">Le rôle Administrateur général est verrouillé (accès complet) pour éviter de perdre l’accès à l’administration. Tous les rôles consultent la carte du Sénégal entier ; la modification et les données nominatives sont limitées au périmètre du compte. En production, ces règles sont appliquées par l’API et par PostgreSQL (Row-Level Security).</div></section>
+      ${can ? '' : PS.lockHTML('Rôles et permissions')}`;
+  }
+  function bindRoles() {
+    const sv = $('#r-save'); if (sv) sv.addEventListener('click', () => {
+      $$('tr[data-role]').forEach(tr => { const k = tr.dataset.role; if (k === 'admin_general') return; const r = PS.ROLES[k];
+        r.modules = $$('[data-mod]', tr).filter(c => c.checked).map(c => c.dataset.mod); r.edit = $('[data-edit]', tr).value; r.pii = $('[data-pii]', tr).checked;
+        if (!r.modules.length) r.modules = ['carte'] });
+      PS.saveAdmin(); PS.log('a modifié les permissions des rôles'); PS.role = PS.ROLES[PS.user.role]; shell(); go('admin'); PS.toast('Permissions enregistrées.');
+    });
+    const nw = $('#r-new'); if (nw) nw.addEventListener('click', () => {
+      const m = PS.modal('Créer un rôle', `<div class="grid g-2"><div class="field"><label for="rn-l">Libellé</label><input id="rn-l" placeholder="ex. Responsable communication"></div><div class="field"><label for="rn-b">Partir du rôle</label><select id="rn-b">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${k === 'analyste' ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div></div><div class="field"><label for="rn-d">Description</label><input id="rn-d" placeholder="Ce que ce rôle peut faire"></div><p class="small muted" style="margin:0">Le nouveau rôle reprend les permissions du rôle de départ ; ajustez-les ensuite dans le tableau.</p>`, '<button class="btn" data-close>Annuler</button><button class="btn primary" id="rn-ok">Créer le rôle</button>');
+      $('#rn-ok', m).addEventListener('click', () => {
+        const l = $('#rn-l', m).value.trim(); if (!l) { PS.toast('Donnez un libellé au rôle.'); return }
+        let k = l.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''); if (!k || PS.ROLES[k]) k = (k || 'role') + '_' + Date.now().toString(36).slice(-4);
+        const b = PS.ROLES[$('#rn-b', m).value];
+        PS.ROLES[k] = { label: l, court: l.length > 18 ? l.slice(0, 17) + '…' : l, desc: $('#rn-d', m).value.trim() || `Rôle créé à partir de « ${b.label} ».`, edit: b.edit === 'national' ? 'aucun' : b.edit, pii: b.pii, modules: b.modules.filter(x => x !== 'admin'), custom: true };
+        PS.saveAdmin(); PS.log(`a créé le rôle « ${l} »`); PS.closeModal(); render(); PS.toast(`Rôle « ${l} » créé : réglez ses permissions puis enregistrez.`);
+      });
+    });
+    $$('[data-r-del]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.rDel; const l = PS.ROLES[k].label; delete PS.ROLES[k]; PS.saveAdmin(); PS.log(`a supprimé le rôle « ${l} »`); render(); PS.toast(`Rôle « ${l} » supprimé.`) }));
+  }
+  function adminJournal() {
+    return `<section class="panel"><header><h3>Journal des modifications</h3><span class="sub">qui a fait quoi, et quand</span></header><div class="body feed" style="padding-block:4px">${PS.AUDIT().slice(0, 60).map(a => `<div class="it"><span class="t">${a.t}</span><span><b>${esc(a.u)}</b> ${esc(a.a)}</span></div>`).join('')}</div></section>`;
+  }
+  function adminConn() {
+    const conns = [['CS', 'CivicScope', 'Résultats électoraux par scrutin : régions, départements, communes, bureaux de vote. Score, rang, participation.', 'Connecté', 's-ok'], ['QF', 'QFieldCloud', 'Synchronisation des projets QGIS terrain (sections, permanences, zones).', 'Connecté', 's-ok'], ['KB', 'KoboToolbox', 'Formulaires XLSForm (porte-à-porte, antennes, cartes).', 'Connecté', 's-ok'], ['ODK', 'ODK Central', 'Alternative auto-hébergée pour les formulaires XLSForm.', 'Disponible', 's-neutral'], ['SMS', 'Passerelle SMS (opérateur)', 'Envoi des SMS via l’API de l’opérateur, accusés de réception.', 'À configurer', 's-warn'], ['VOX', 'Serveur vocal (Asterisk)', 'Appels vocaux automatisés : diffusion d’un message enregistré via un trunk SIP opérateur.', 'À configurer', 's-warn'], ['API', 'API REST PoliScope', 'FastAPI + OpenAPI : interconnexion avec les outils du parti.', 'Disponible', 's-neutral']];
+    return `<div class="grid g-2" style="align-items:start">
+      <section class="panel"><header><h3>Connecteurs et sources</h3></header><div class="body" style="padding-block:4px">${conns.map(c => `<div class="conn"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div><span class="chip ${c[4]}">${c[3]}</span></div>`).join('')}</div></section>
+      <div class="stack">
         <section class="panel"><header><h3>Pile technique 100 % open source</h3></header><div class="body small" style="display:grid;gap:8px">
-          ${[['Données', 'PostgreSQL 16 + PostGIS 3 (limites administratives CEGIT, maillage, CRM)'], ['API', 'FastAPI (Python), OpenAPI 3, pg_featureserv / Martin pour les tuiles vectorielles'], ['Identité', 'Keycloak (OpenID Connect), rôles et périmètres'], ['Cartographie', 'Leaflet, fonds OpenStreetMap, QGIS Server en option'], ['Terrain', 'QField / QFieldCloud, KoboToolbox, ODK Central'], ['Rapports', 'jsPDF (navigateur) ; WeasyPrint côté serveur'], ['Exploitation', 'Docker Compose, Nginx, MinIO (pièces jointes), sauvegardes pgBackRest']].map(r => `<div><b>${r[0]}</b> · <span class="muted">${r[1]}</span></div>`).join('')}
+          ${[['Données', 'PostgreSQL 16 + PostGIS 3 (limites administratives CEGIT, maillage, CRM)'], ['API', 'FastAPI (Python), OpenAPI 3, Martin pour les tuiles vectorielles'], ['Identité', 'Keycloak (OpenID Connect), rôles et périmètres'], ['Cartographie', 'Leaflet, fonds OpenStreetMap'], ['Terrain', 'QField / QFieldCloud, KoboToolbox, ODK Central'], ['Messages vocaux', 'Asterisk (serveur vocal), trunk SIP opérateur'], ['Rapports', 'jsPDF (navigateur) ; WeasyPrint côté serveur'], ['Exploitation', 'Docker Compose, Nginx, MinIO, pgBackRest']].map(r => `<div><b>${r[0]}</b> · <span class="muted">${r[1]}</span></div>`).join('')}
         </div></section>
         <section class="panel"><header><h3>Protection des données</h3></header><div class="body" style="display:grid;gap:10px;font-size:14px">
           <div><b>Cadre légal</b><div class="muted">Loi n° 2008-12 sur la protection des données à caractère personnel ; déclaration du traitement auprès de la CDP.</div></div>
           <div><b>Minimisation</b><div class="muted">Aucune donnée d’opinion, d’ethnie ou de religion. Numéros masqués, nominatifs limités au périmètre.</div></div>
-          <div><b>Consentement</b><div class="muted">Recueilli à la saisie (y compris dans les formulaires QField/Kobo), daté, renouvelé tous les 24 mois.</div></div>
+          <div><b>Consentement</b><div class="muted">Recueilli à la saisie, daté, renouvelé tous les 24 mois.</div></div>
           <div><b>Hébergement</b><div class="muted">Option d’hébergement au Sénégal ; sauvegardes chiffrées, exports tracés.</div></div>
         </div></section>
-      </div>`;
-    },
-    bind() {
-      const b = $('#addUser'); if (b) b.addEventListener('click', () => {
-        const m = PS.modal('Inviter un utilisateur', `<div class="grid g-2"><div class="field"><label for="iu-n">Nom</label><input id="iu-n"></div><div class="field"><label for="iu-r">Rôle</label><select id="iu-r">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('')}</select></div><div class="field" style="grid-column:1/-1"><label for="iu-p">Périmètre</label>${PS.terrSelect('iu-p', 'nat', false)}</div></div><p class="notice">En production, l’invitation crée le compte dans Keycloak et envoie un lien d’activation.</p>`, `<button class="btn" data-close>Annuler</button><button class="btn primary" id="iu-ok">Envoyer l’invitation</button>`);
-        $('#iu-ok', m).addEventListener('click', () => { const n = $('#iu-n', m).value.trim(); if (!n) { PS.toast('Indiquez le nom de la personne.'); return } PS.log(`a invité ${n} (${PS.ROLES[$('#iu-r', m).value].label})`); PS.closeModal(); PS.toast(`Invitation préparée pour ${n}.`) });
-      });
-    }
-  };
+      </div></div>`;
+  }
 
   /* ================= Démarrage ================= */
   async function boot() {
@@ -733,8 +927,9 @@ window.PS = window.PS || {};
     for (const [id, v] of Object.entries(extra.edits)) { const s = PS.D.sections.find(x => x.id === id); if (s) Object.assign(s, v) }
     PS.NAT = natUnit();
     MAXINS = { dep: Math.max(...PS.D.depts.map(d => d.inscrits)), com: Math.max(...PS.D.communes.map(d => d.inscrits)), reg: Math.max(...PS.D.regions.map(d => d.inscrits)) };
-    let login = null; try { login = sessionStorage.getItem(SKEY) } catch (e) { }
-    if (login && signIn(login)) { shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]) } else renderLogin();
+    loadAdmin();
+    let login = null, imp = null; try { login = sessionStorage.getItem(SKEY); imp = sessionStorage.getItem(IMPKEY) } catch (e) { }
+    if (login && signIn(login)) { if (imp) PS.impersonator = PS.USERS.find(x => x.login === imp) || null; shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]) } else renderLogin();
     const rr = () => { if (!$('.modal-bg') && PS.user) render() };
     try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rr) } catch (e) { }
     new MutationObserver(rr).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
