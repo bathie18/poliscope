@@ -26,7 +26,7 @@ PoliScope est la solution « partis politiques » de la famille de [CivicScope](
 
 ## Accès à la démonstration
 
-L'application s'ouvre sur un écran de connexion. Chaque profil voit le Sénégal entier, mais ne modifie que son propre périmètre.
+L'application s'ouvre sur un écran de connexion, avec la carte du Sénégal en fond. Chaque profil voit le Sénégal entier, mais ne modifie que son propre périmètre. Les comptes de test ci-dessous ne sont pas affichés à l'écran : ils sont listés ici.
 
 | Identifiant | Mot de passe | Profil | Périmètre de modification |
 |---|---|---|---|
@@ -39,7 +39,7 @@ L'application s'ouvre sur un écran de connexion. Chaque profil voit le Sénéga
 | `analyste` | `Analyse2026` | Analyste / lecteur | Aucune modification, pas de données nominatives |
 | `benevole.pikine` | `Pikine2026` | Bénévole terrain | Actions et collecte du département de Pikine |
 
-On peut aussi cliquer directement sur un profil dans l'écran de connexion.
+Une fois connecté avec `admin`, l'onglet **Administration** permet de créer, modifier, désactiver ou supprimer des comptes, de régler les permissions de chaque rôle, et de **tester n'importe quel profil** (« Tester ce profil »), avec un bandeau pour revenir à son compte.
 Ces comptes sont fictifs : dans le prototype, l'authentification est simulée côté navigateur. En production, elle repose sur Keycloak et les droits sont appliqués par l'API et par PostgreSQL (voir [Rôles et permissions](docs/roles-permissions.md)).
 
 ## Fonctionnalités
@@ -51,15 +51,20 @@ PoliScope suit les cinq piliers du dossier de cadrage.
 | **1. Maillage territorial** | Siège, coordinations régionales et départementales, sections et antennes géolocalisées ; fiches modifiables selon le profil ; proposition d'antenne avec validation. |
 | **2. CRM organisationnel** | Contacts (militants, sympathisants, bénévoles), étiquettes, cartes, historique, **consentement obligatoire**. Données nominatives limitées au périmètre du profil. |
 | **3. Intelligence territoriale** | Carte à **trois échelles** (régions, départements, communes), fond **OpenStreetMap ou blanc**, 8 indicateurs documentés, panneaux **Couches** et **Légende** dans la carte, zones desservies (~30 min). |
-| **4. Actions terrain** | Porte-à-porte, phoning, caravanes, réunions ; tableau de suivi ; zone d'action dessinée sur la carte avec estimation des ménages ; collecte **QField, KoboToolbox, ODK**. |
-| **5. Pilotage & décision** | Tableau de bord par territoire, score de priorité à pondération réglable, matrice score × couverture, scénarios d'ouverture d'antennes, **rapport PDF territorial**, exports CSV / GeoJSON. |
+| **4. Actions terrain** | Porte-à-porte, phoning, caravanes, réunions ; tableau de suivi ; zone d'action dessinée sur la carte ; **clôture avec fiche bilan** et **historique** filtrable ; **collecte terrain** reliée aux actions (appli, import de fichiers KoboToolbox / QField / ODK, file de validation, statistiques par collecteur, couche « Remontées terrain » sur la carte) ; messages **SMS, WhatsApp et vocaux** (enregistrement au micro ou import d'un fichier audio). |
+| **5. Pilotage & décision** | Tableau de bord par territoire, score de priorité à pondération réglable, matrice score × couverture, scénarios d'ouverture d'antennes, **rapports PDF territoriaux** (choix de l'échelle, recherche de la localité, quatre modèles), exports CSV / GeoJSON. |
+| **Gouvernance** | Console d'administration : comptes, rôles et permissions modifiables, test des profils, journal des modifications. |
 
 Les indicateurs cartographiques sont décrits en détail dans [docs/indicateurs.md](docs/indicateurs.md) :
 typologie des territoires, score de priorité, score électoral, rang du parti, couverture communale, participation, membres pour 10 000 habitants, tendance d'activité sur 90 jours.
 
-| Tableau de bord | Rapport PDF territorial |
+| Connexion | Administration |
 |---|---|
-| ![Tableau de bord](assets/img/screenshots/tableau-de-bord.png) | ![Rapports](assets/img/screenshots/rapports.png) |
+| ![Connexion](assets/img/screenshots/connexion.png) | ![Administration](assets/img/screenshots/administration.png) |
+| **Historique des actions** | **Collecte terrain** |
+| ![Historique](assets/img/screenshots/historique-actions.png) | ![Collecte terrain](assets/img/screenshots/collecte-terrain.png) |
+| **Rapports** | **Message vocal** |
+| ![Rapports](assets/img/screenshots/rapports.png) | ![Message vocal](assets/img/screenshots/messages-vocal.png) |
 
 ## Pile technique 100 % open source
 
@@ -68,6 +73,7 @@ typologie des territoires, score de priorité, score électoral, rang du parti, 
 | Interface | HTML, CSS, JavaScript sans framework | Même base, découpée en modules (Vite) |
 | Cartographie | [Leaflet](https://leafletjs.com) 1.9.4 (BSD-2), fonds OpenStreetMap (ODbL) | Leaflet ou MapLibre GL, tuiles vectorielles [Martin](https://martin.maplibre.org), fonds OSM auto-hébergés |
 | Rapports | [jsPDF](https://github.com/parallax/jsPDF) + AutoTable (MIT) | WeasyPrint (BSD) côté serveur, archivage |
+| Messages vocaux | Enregistrement navigateur (MediaRecorder) | Asterisk (GPL) : appels automatisés via un trunk SIP opérateur |
 | Données | GeoJSON statiques | PostgreSQL 16 + PostGIS 3 (limites administratives CEGIT) |
 | API | — | FastAPI (MIT), OpenAPI 3 ([api/openapi.yaml](api/openapi.yaml)) |
 | Identité et droits | Simulation navigateur | Keycloak (Apache-2.0, OpenID Connect) + PostgreSQL Row-Level Security |

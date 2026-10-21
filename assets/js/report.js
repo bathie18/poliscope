@@ -13,7 +13,7 @@ window.PS = window.PS || {};
   const clean = s => String(s ?? '').replace(/[  ]/g, ' ').replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/…/g, '...').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/•/g, '-').replace(/→/g, '->').replace(/·/g, '-');
   const nf = n => clean(fmt(n));
 
-  if (!S.report) S.report = { terr: null, opts: { carte: true, positions: true, tableau: true, sous: true, sections: true, recos: true } };
+  if (!S.report) S.report = { terr: null, scale: null, model: 'complet', history: [] };
 
   function childrenOf(u) { return u.level === 'nat' ? PS.D.regions : u.level === 'reg' ? u.children : u.level === 'dep' ? u.children : [u] }
   function geomsOf(u) { return u.level === 'nat' ? PS.D.regions.map(r => r.geom) : [u.geom] }
@@ -55,33 +55,84 @@ window.PS = window.PS || {};
   };
 
   /* ---------- Vue Rapports ---------- */
+  const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const SCALES = [['reg', 'Régions', () => PS.D.regions], ['dep', 'Départements', () => PS.D.depts], ['com', 'Communes', () => PS.D.communes]];
+  const OPTS = [['carte', 'Carte du territoire (typologie)'], ['positions', 'Position des sections et coordinations'], ['tableau', 'Tableau de bord et statistiques'], ['sous', 'Indicateurs des sous-territoires'], ['sections', 'Liste géolocalisée des sections'], ['histo', 'Historique des actions terminées'], ['recos', 'Recommandations']];
+  const MODELS = {
+    complet: { l: 'Rapport complet', d: 'Carte, tableau de bord, sous-territoires, sections, actions, recommandations.', o: ['carte', 'positions', 'tableau', 'sous', 'sections', 'histo', 'recos'] },
+    synthese: { l: 'Fiche de synthèse', d: 'Une page : carte et chiffres clés, pour une réunion ou un entretien.', o: ['carte', 'positions', 'tableau'] },
+    maillage: { l: 'Rapport maillage', d: 'Carte et liste géolocalisée des sections et coordinations.', o: ['carte', 'positions', 'sections'] },
+    activite: { l: 'Bilan d’activité terrain', d: 'Chiffres clés, actions terminées et leurs bilans, recommandations.', o: ['tableau', 'histo', 'recos'] }
+  };
+  const LVL = { nat: 'Pays', reg: 'Région', dep: 'Département', com: 'Commune' };
+  function parentLabel(u) { return u.level === 'com' ? `${u.dep} · ${u.r}` : u.level === 'dep' ? `Région de ${u.r}` : u.level === 'reg' ? 'Sénégal' : '' }
+  function perimId() { const p = PS.user.perimetre; if (p.type === 'region') return PS.D.regions.find(r => r.n === p.nom).id; if (p.type === 'departement') return PS.D.depts.find(d => d.n === p.nom).id; return 'nat' }
   PS.VIEWS.rapports = {
     html() {
-      if (!S.report.terr) S.report.terr = S.focus || 'nat';
-      const O = S.report.opts;
-      const ex = [['csv-sub', 'Indicateurs des sous-territoires', 'CSV · une ligne par région, département ou commune du territoire choisi'], ['geo-com', 'Communes + indicateurs', 'GeoJSON · géométries et indicateurs, pour QGIS ou un WebSIG'], ['geo-sec', 'Sections et coordinations', 'GeoJSON · points géolocalisés, statut, effectifs'], ['csv-act', 'Actions terrain', 'CSV · type, territoire, équipe, objectif, réalisé']];
-      return `<div class="view-head"><div><div class="label">Rapports</div><h1>Rapport PDF territorial</h1><p>Choisissez une région, un département ou une commune : PoliScope produit un PDF avec la carte du territoire, la position des sections et coordinations, le tableau de bord et les statistiques.</p></div></div>
+      const R = S.report;
+      if (!R.terr) R.terr = S.focus || 'nat';
+      if (!R.scale) { const u = PS.unit(R.terr); R.scale = u.level === 'nat' ? 'dep' : u.level }
+      if (!R.model) R.model = 'complet'; if (!R.history) R.history = [];
+      const ex = [['csv-sub', 'Indicateurs des sous-territoires', 'CSV · une ligne par région, département ou commune du territoire choisi'], ['geo-com', 'Communes + indicateurs', 'GeoJSON · géométries et indicateurs, pour QGIS ou un WebSIG'], ['geo-sec', 'Sections et coordinations', 'GeoJSON · points géolocalisés, statut, effectifs'], ['csv-act', 'Actions terrain', 'CSV · type, territoire, équipe, objectif, réalisé, bilan']];
+      return `<div class="view-head"><div><div class="label">Rapports</div><h1>Rapports territoriaux</h1><p>Choisissez une échelle, recherchez la localité, puis le modèle de rapport. Le PDF contient la carte du territoire, la position des sections et coordinations, le tableau de bord et les statistiques.</p></div></div>
       <div class="report-grid">
-        <section class="panel"><header><h3>Paramètres</h3></header><div class="body" style="display:grid;gap:14px">
-          <div class="field"><label for="rpTerr">Territoire</label>${PS.terrSelect('rpTerr', S.report.terr, true).replace('id="rpTerr"', 'id="rpTerr" style="width:100%"')}</div>
-          <div class="checks"><div class="label">Contenu</div>
-            ${[['carte', 'Carte du territoire (typologie)'], ['positions', 'Position des sections et coordinations'], ['tableau', 'Tableau de bord et statistiques'], ['sous', 'Indicateurs des sous-territoires'], ['sections', 'Liste géolocalisée des sections'], ['recos', 'Recommandations']].map(([k, l]) => `<label><input type="checkbox" data-opt="${k}" ${O[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
-          <button class="btn primary" id="rpGo" style="justify-content:center">Générer le PDF</button>
-          <p class="small muted" style="margin:0">Le document est produit dans le navigateur (jsPDF, open source) et inscrit au journal. En production : génération serveur (WeasyPrint) et archivage.</p>
-        </div></section>
-        <section class="panel"><header><h3>Aperçu de la carte</h3><span class="sub" id="rpSub"></span></header><div class="body"><div class="report-prev"><canvas id="rpCanvas" width="1600" height="1100" aria-label="Aperçu de la carte du rapport"></canvas></div>
-          <div class="legend" style="flex-direction:row;flex-wrap:wrap;gap:6px 16px;margin-top:10px">${Object.keys(PS.TYPO).map(t => `<span class="li"><span class="sw" style="background:${TYPO_PRINT[t]}"></span>${PS.TYPO[t].l}</span>`).join('')}${Object.keys(STAT).map(s => `<span class="li"><span class="sdot" style="background:${STAT[s]}"></span>Section ${s.toLowerCase()}</span>`).join('')}<span class="li"><span class="coord-icon" style="width:10px;height:10px;background:${PAL.teal}"></span>Coord. départementale</span><span class="li"><span class="hq-icon" style="width:16px;height:16px;font-size:8px">R</span>Coord. régionale</span></div></div></section>
+        <div class="stack">
+          <section class="panel"><header><h3>1 · Territoire</h3></header><div class="body" style="display:grid;gap:12px">
+            <div class="scale-tiles" role="radiogroup" aria-label="Échelle">${SCALES.map(([k, l, f]) => `<button type="button" role="radio" data-scale="${k}" aria-checked="${R.scale === k}" aria-pressed="${R.scale === k}"><b>${l}</b><span class="num">${f().length}</span></button>`).join('')}</div>
+            <div class="search"><input type="search" id="rpQ" autocomplete="off" placeholder="Rechercher ${R.scale === 'reg' ? 'une région' : R.scale === 'dep' ? 'un département' : 'une commune'}…" aria-label="Rechercher une localité" aria-controls="rpRes"><div class="sr" id="rpRes" role="listbox"></div></div>
+            <div class="row" style="gap:6px"><button type="button" class="btn sm" data-quick="nat">Sénégal entier</button>${PS.user.perimetre.type !== 'national' ? `<button type="button" class="btn sm" data-quick="perim">Mon périmètre</button>` : ''}</div>
+            <div class="terr-card" id="rpSel"></div>
+          </div></section>
+          <section class="panel"><header><h3>2 · Modèle</h3></header><div class="body" style="display:grid;gap:10px">
+            <div class="model-cards">${Object.entries(MODELS).map(([k, m]) => `<label class="mcard"><input type="radio" name="rpModel" value="${k}" ${R.model === k ? 'checked' : ''}><span><b>${m.l}</b><span class="small muted">${m.d}</span></span></label>`).join('')}</div>
+            <details class="checks"><summary class="small" style="cursor:pointer">Ajuster le contenu</summary><div class="checks" style="margin-top:8px">${OPTS.map(([k, l]) => `<label><input type="checkbox" data-opt="${k}" ${MODELS[R.model].o.includes(k) || (R.custom && R.custom[k]) ? 'checked' : ''}> ${l}</label>`).join('')}</div></details>
+          </div></section>
+          <button class="btn primary" id="rpGo" style="justify-content:center;padding-block:10px">Générer le PDF</button>
+        </div>
+        <div class="stack">
+          <section class="panel"><header><h3>Aperçu de la carte</h3><span class="sub" id="rpSub"></span></header><div class="body"><div class="report-prev"><canvas id="rpCanvas" width="1600" height="1100" aria-label="Aperçu de la carte du rapport"></canvas></div>
+            <div class="legend" style="flex-direction:row;flex-wrap:wrap;gap:6px 16px;margin-top:10px">${Object.keys(PS.TYPO).map(t => `<span class="li"><span class="sw" style="background:${TYPO_PRINT[t]}"></span>${PS.TYPO[t].l}</span>`).join('')}${Object.keys(STAT).map(s => `<span class="li"><span class="sdot" style="background:${STAT[s]}"></span>Section ${s.toLowerCase()}</span>`).join('')}<span class="li"><span class="coord-icon" style="width:10px;height:10px;background:${PAL.teal}"></span>Coord. départementale</span><span class="li"><span class="hq-icon" style="width:16px;height:16px;font-size:8px">R</span>Coord. régionale</span></div></div></section>
+          <section class="panel"><header><h3>Rapports générés</h3><span class="sub">cette session</span></header><div class="body" id="rpHist"></div></section>
+        </div>
       </div>
       <h2 style="font-size:18px;margin:26px 0 12px">Exports de données</h2>
       <div class="grid g-2">${ex.map(e => `<section class="panel"><div class="body row" style="justify-content:space-between;flex-wrap:nowrap"><div style="min-width:0"><b>${e[1]}</b><div class="small muted">${e[2]}</div></div><button class="btn" data-exp="${e[0]}">Exporter</button></div></section>`).join('')}</div>`;
     },
     bind() {
-      const prev = () => { const u = PS.unit(S.report.terr); $('#rpSub').textContent = PS.terrLabel(u); PS.drawTerritoryMap($('#rpCanvas'), u, S.report.opts) };
-      $('#rpTerr').addEventListener('change', e => { S.report.terr = e.target.value; prev() });
-      $$('[data-opt]').forEach(c => c.addEventListener('change', () => { S.report.opts[c.dataset.opt] = c.checked; prev() }));
-      $('#rpGo').addEventListener('click', () => buildPDF(PS.unit(S.report.terr), S.report.opts));
+      const R = S.report;
+      const opts = () => Object.fromEntries(OPTS.map(([k]) => [k, !!($(`[data-opt="${k}"]`) || {}).checked]));
+      const prev = () => { const u = PS.unit(R.terr); $('#rpSub').textContent = PS.terrLabel(u); PS.drawTerritoryMap($('#rpCanvas'), u, opts()) };
+      const card = () => {
+        const u = PS.unit(R.terr); const t = PS.typo(u);
+        $('#rpSel').innerHTML = `<div class="small muted">${LVL[u.level]}${u.level !== 'nat' ? ' · ' + esc(parentLabel(u)) : ''}</div><b style="font-size:17px;font-family:var(--f-display)">${esc(u.n)}</b>
+          <div class="row" style="gap:6px;margin-top:4px">${PS.typoChip(t)}<span class="chip s-neutral">Priorité ${PS.priority(u)}/100</span></div>
+          <div class="kv" style="margin-top:8px"><div><div class="k">Population</div><div class="v" style="font-size:14px">${fmt(u.pop)}</div></div><div><div class="k">Sections</div><div class="v" style="font-size:14px">${u.sections}</div></div><div><div class="k">Couverture</div><div class="v" style="font-size:14px">${u.level === 'com' ? (u.couv ? 'Oui' : 'Non') : u.couv + ' %'}</div></div><div><div class="k">Score électoral</div><div class="v" style="font-size:14px">${PS.U.pct(u.score, 1)}</div></div></div>`;
+      };
+      const pick = id => { R.terr = id; $('#rpQ').value = ''; $('#rpRes').innerHTML = ''; card(); prev() };
+      const search = () => {
+        const q = norm($('#rpQ').value.trim()), list = SCALES.find(s => s[0] === R.scale)[2]();
+        let hits, title;
+        if (!q) { hits = [...list].sort((a, b) => b.pop - a.pop).slice(0, 6); title = 'Les plus peuplées' }
+        else { hits = list.filter(u => norm(u.n).includes(q) || norm(parentLabel(u)).includes(q)).sort((a, b) => (norm(a.n).startsWith(q) ? 0 : 1) - (norm(b.n).startsWith(q) ? 0 : 1) || a.n.localeCompare(b.n)).slice(0, 10); title = hits.length ? `${hits.length === 10 ? '10 premiers' : hits.length} résultat${hits.length > 1 ? 's' : ''}` : '' }
+        $('#rpRes').innerHTML = hits.length ? `<div class="sr-title">${title}</div>` + hits.map((u, i) => `<button type="button" role="option" data-pick="${u.id}" class="${i === 0 && q ? 'first' : ''}"><span><b>${esc(u.n)}</b><span class="small muted"> · ${esc(parentLabel(u))}</span></span><span class="small muted num">${fmt(u.pop)} hab.</span></button>`).join('') : `<div class="sr-title">Aucune localité ne correspond à « ${esc($('#rpQ').value)} » dans les ${SCALES.find(s => s[0] === R.scale)[1].toLowerCase()}.</div>`;
+        $$('[data-pick]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); pick(b.dataset.pick) }));
+      };
+      $$('[data-scale]').forEach(b => b.addEventListener('click', () => { R.scale = b.dataset.scale; $$('[data-scale]').forEach(x => { x.setAttribute('aria-pressed', x === b); x.setAttribute('aria-checked', x === b) }); $('#rpQ').placeholder = `Rechercher ${R.scale === 'reg' ? 'une région' : R.scale === 'dep' ? 'un département' : 'une commune'}…`; $('#rpQ').focus(); search() }));
+      $('#rpQ').addEventListener('input', search); $('#rpQ').addEventListener('focus', search);
+      $('#rpQ').addEventListener('blur', () => setTimeout(() => { const r = $('#rpRes'); if (r) r.innerHTML = '' }, 150));
+      $('#rpQ').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const f = $('[data-pick]'); if (f) pick(f.dataset.pick) } if (e.key === 'Escape') { $('#rpRes').innerHTML = '' } });
+      $$('[data-quick]').forEach(b => b.addEventListener('click', () => pick(b.dataset.quick === 'nat' ? 'nat' : perimId())));
+      $$('input[name=rpModel]').forEach(r => r.addEventListener('change', () => { R.model = r.value; $$('[data-opt]').forEach(c => c.checked = MODELS[R.model].o.includes(c.dataset.opt)); prev() }));
+      $$('[data-opt]').forEach(c => c.addEventListener('change', prev));
+      const hist = () => { $('#rpHist').innerHTML = R.history.length ? `<div class="feed">${R.history.map((h, i) => `<div class="it" style="grid-template-columns:52px minmax(0,1fr) auto"><span class="t">${h.t}</span><span><b>${esc(h.label)}</b><div class="small muted">${esc(MODELS[h.model] ? MODELS[h.model].l : 'Personnalisé')} · ${h.pages} page${h.pages > 1 ? 's' : ''}</div></span><button class="btn sm" data-regen="${i}">Régénérer</button></div>`).join('')}</div>` : '<p class="small muted" style="margin:0">Aucun rapport généré pour l’instant. Les rapports produits apparaissent ici et sont inscrits au journal.</p>'; $$('[data-regen]').forEach(b => b.addEventListener('click', () => { const h = R.history[+b.dataset.regen]; buildPDF(PS.unit(h.terr), h.opts) })) };
+      $('#rpGo').addEventListener('click', () => {
+        const u = PS.unit(R.terr), o = opts();
+        if (!Object.values(o).some(Boolean)) { PS.toast('Cochez au moins un contenu pour le rapport.'); return }
+        const n = buildPDF(u, o); if (!n) return;
+        const h = new Date(); R.history.unshift({ t: `${String(h.getHours()).padStart(2, '0')}:${String(h.getMinutes()).padStart(2, '0')}`, terr: R.terr, label: PS.terrLabel(u), model: R.model, pages: n, opts: o }); R.history.splice(12); hist();
+      });
       $$('[data-exp]').forEach(b => b.addEventListener('click', () => doExport(b.dataset.exp)));
-      prev();
+      card(); prev(); hist();
     }
   };
 
@@ -141,6 +192,18 @@ window.PS = window.PS || {};
       const co = [PS.D.hq, ...PS.D.coordsReg, ...PS.D.coordsDep].filter(c => u.level === 'nat' ? true : u.level === 'reg' ? c.r === u.n : inU(c));
       if (co.length) { if (y > 250) { doc.addPage(); head(PS.terrLabel(u)) } h2('Siège et coordinations'); doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'striped', styles: { fontSize: 8, cellPadding: 1.3 }, headStyles: { fillColor: PAL.rail }, head: [['Structure', 'Type', 'Responsable', 'Latitude', 'Longitude']], body: co.map(c => [clean(c.name), clean(c.type), clean(c.resp), c.lat.toFixed(4), c.lng.toFixed(4)]) }); y = doc.lastAutoTable.finalY + 8 }
     }
+    if (O.histo) {
+      const hs = PS.histOf(u).filter(a => a.end >= -180);
+      if (y > 230) { doc.addPage(); head(PS.terrLabel(u)) }
+      h2(`Actions terminées - 6 derniers mois (${hs.length})`);
+      if (!hs.length) { doc.setFontSize(9); doc.text(clean('Aucune action terminée sur ce territoire depuis six mois.'), M, y); y += 8 }
+      else {
+        doc.autoTable({ startY: y, margin: { left: M, right: M }, theme: 'striped', styles: { fontSize: 7.8, cellPadding: 1.4 }, headStyles: { fillColor: PAL.teal }, head: [['Terminée le', 'Action', 'Type', 'Objectif', 'Réalisé', 'Atteinte', 'Bilan']],
+          body: hs.slice(0, 80).map(a => { const b = a.bilan || {}; const res = b.favorables != null ? `${b.favorables} favorables, ${b.indecis} indécis, ${b.refus} refus, ${b.absents} absents` : b.cartes != null ? `${b.cartes} cartes placées` : b.participants != null ? `${b.participants} participants` : 'à saisir'; return [clean(dayFmt(a.end)), clean(a.t), clean(a.type), nf(a.obj), nf(a.done), `${a.obj ? Math.round(a.done / a.obj * 100) : 0} %`, clean(res + (b.resume ? '. ' + b.resume : ''))] }),
+          columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' }, 6: { cellWidth: 62 } } });
+        y = doc.lastAutoTable.finalY + 8;
+      }
+    }
     if (O.recos) {
       if (y > 240) { doc.addPage(); head(PS.terrLabel(u)) }
       h2('Recommandations');
@@ -151,7 +214,7 @@ window.PS = window.PS || {};
     const n = doc.getNumberOfPages();
     for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor('#7a8a87'); doc.text(clean('PoliScope (c) CEGIT - démonstration, données du parti simulées - limites GADM v4.1 (provisoire)'), M, 291); doc.text(`${i} / ${n}`, W - M, 291, { align: 'right' }) }
     const name = `PoliScope_rapport_${PS.terrLabel(u).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
-    try { doc.save(name); PS.log(`a généré le rapport PDF « ${PS.terrLabel(u)} »`); PS.toast(`Rapport ${name} généré (${n} pages).`) } catch (e) { PS.toast('Le navigateur a bloqué le téléchargement du PDF.') }
+    try { doc.save(name); PS.log(`a généré le rapport PDF « ${PS.terrLabel(u)} »`); PS.toast(`Rapport ${name} généré (${n} pages).`); return n } catch (e) { PS.toast('Le navigateur a bloqué le téléchargement du PDF.'); return 0 }
   }
   PS.buildPDF = buildPDF;
 

@@ -10,7 +10,7 @@ window.PS = window.PS || {};
     ['Pilotage', [['tableau', 'Tableau de bord'], ['carte', 'Carte stratégique'], ['priorites', 'Priorisation']]],
     ['Organisation', [['maillage', 'Maillage & antennes'], ['contacts', 'Contacts & membres']]],
     ['Mobilisation', [['actions', 'Actions terrain'], ['terrain', 'Collecte terrain'], ['messages', 'Messages'], ['benevoles', 'Bénévoles'], ['agenda', 'Agenda']]],
-    ['Gouvernance', [['rapports', 'Rapports PDF & exports'], ['admin', 'Administration']]]
+    ['Gouvernance', [['rapports', 'Rapports'], ['admin', 'Administration']]]
   ];
 
   /* ---------- Rôles ----------

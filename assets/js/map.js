@@ -4,9 +4,10 @@
 window.PS = window.PS || {};
 (function (PS) {
   'use strict';
-  const { $, $$, esc, fmt, pct, css, ago } = PS.U;
+  const { $, $$, esc, fmt, pct, css, ago, dayFmt } = PS.U;
   const S = PS.S;
   const M = { m: null, base: null, g: {}, layerById: {} };
+  const RCOL = { 'Favorable': '--teal', 'Viendra': '--teal', 'Indécis': '--amber', 'À rappeler': '--amber', 'Pas intéressé': '--coral', 'Refus': '--coral', 'Absent': '--ink-3', 'Pas de réponse': '--ink-3' };
   const ST = { 'Active': 's-ok', 'À relancer': 's-warn', 'Inactive': 's-bad' };
   const statCol = s => css({ 'Active': '--teal', 'À relancer': '--amber', 'Inactive': '--coral' }[s]);
   const unitsAt = lvl => lvl === 'reg' ? PS.D.regions : lvl === 'dep' ? PS.D.depts : PS.D.communes;
@@ -52,7 +53,7 @@ window.PS = window.PS || {};
         <div class="ind-desc">${esc(I.desc)}<span class="src">Source : ${esc(I.source)}</span></div>
         <button class="linkbtn" data-info="${S.map.ind}" style="align-self:flex-start">Calcul et usage de l’indicateur</button></div>
       <div class="grpbox"><div class="label">Couches</div>
-        ${[['coords', `Siège et coordinations (${nCo})`], ['sections', `Sections et antennes (${nSec})`], ['iso', 'Zones desservies (~30 min)'], ['zones', 'Zones d’action dessinées'], ['labels', 'Noms des territoires']].map(([k, l]) => `<label class="opt"><input type="checkbox" id="ly-${k}" data-layer="${k}" ${L_[k] ? 'checked' : ''}> ${l}</label>`).join('')}
+        ${[['coords', `Siège et coordinations (${nCo})`], ['sections', `Sections et antennes (${nSec})`], ['iso', 'Zones desservies (~30 min)'], ['zones', 'Zones d’action dessinées'], ['remontees', `Remontées terrain (${PS.REMONTEES().length})`], ['labels', 'Noms des territoires']].map(([k, l]) => `<label class="opt"><input type="checkbox" id="ly-${k}" data-layer="${k}" ${L_[k] ? 'checked' : ''}> ${l}</label>`).join('')}
       </div>`;
     $('#baseSeg').addEventListener('click', e => { const b = e.target.closest('[data-base]'); if (!b) return; S.map.base = b.dataset.base; renderLayersPanel(); drawBase(); drawChoro() });
     $('#lvlSeg').addEventListener('click', e => { const b = e.target.closest('[data-lvl]'); if (!b) return; S.map.level = b.dataset.lvl; renderLayersPanel(); renderLegend(); drawChoro(); drawLabels() });
@@ -72,6 +73,7 @@ window.PS = window.PS || {};
     if (L_.sections) h += `<h4>Sections</h4>${['Active', 'À relancer', 'Inactive'].map(s => `<div class="li"><span class="sdot" style="background:${statCol(s)}"></span>${s}${s === 'Active' ? ' (< 30 j)' : s === 'Inactive' ? ' (> 90 j)' : ' (30–90 j)'}</div>`).join('')}`;
     if (L_.iso) h += `<div class="li"><span class="sw" style="background:${css('--teal')};opacity:.3;border-radius:50%"></span>Desserte ~30 min d’une section</div>`;
     if (L_.zones) h += `<div class="li"><span class="sw" style="background:transparent;border:2px dashed ${css('--amber')}"></span>Zone d’action</div>`;
+    if (L_.remontees) h += `<h4>Remontées terrain</h4>${[['Favorable / viendra', '--teal'], ['Indécis / à rappeler', '--amber'], ['Pas intéressé / refus', '--coral'], ['Absent / pas de réponse', '--ink-3']].map(([l, c]) => `<div class="li"><span class="sdot" style="background:${css(c)};width:7px;height:7px"></span>${l}</div>`).join('')}`;
     h += `<p class="small muted" style="margin:6px 0 0">Limites : GADM v4.1 (provisoire). Données du parti simulées.</p></div>`;
     $('#mpLegend').innerHTML = h;
   }
@@ -83,7 +85,7 @@ window.PS = window.PS || {};
     M.m.setView([14.4, -14.6], 7, { animate: false });
     L.control.zoom({ position: 'bottomright' }).addTo(M.m);
     L.control.scale({ metric: true, imperial: false, position: 'bottomright' }).addTo(M.m);
-    M.g = { choro: L.featureGroup().addTo(M.m), iso: L.layerGroup().addTo(M.m), zones: L.layerGroup().addTo(M.m), sections: L.layerGroup().addTo(M.m), coords: L.layerGroup().addTo(M.m), labels: L.layerGroup().addTo(M.m), draw: L.layerGroup().addTo(M.m) };
+    M.g = { choro: L.featureGroup().addTo(M.m), remontees: L.layerGroup().addTo(M.m), iso: L.layerGroup().addTo(M.m), zones: L.layerGroup().addTo(M.m), sections: L.layerGroup().addTo(M.m), coords: L.layerGroup().addTo(M.m), labels: L.layerGroup().addTo(M.m), draw: L.layerGroup().addTo(M.m) };
     M.m.createPane('iso'); M.m.getPane('iso').style.zIndex = 420;
     drawBase(); drawChoro(); drawOverlays();
     M.m.on('zoomend', drawLabels);
@@ -125,7 +127,8 @@ window.PS = window.PS || {};
   }
   function drawOverlays() {
     const L_ = S.map.layers;
-    ['iso', 'zones', 'sections', 'coords'].forEach(k => M.g[k].clearLayers());
+    ['iso', 'zones', 'sections', 'coords', 'remontees'].forEach(k => M.g[k].clearLayers());
+    if (L_.remontees) PS.REMONTEES().filter(r => r.statut !== 'Hors périmètre').forEach(r => L.circleMarker([r.lat, r.lng], { radius: 3.5, weight: 0.8, color: '#fff', fillColor: css(RCOL[r.resultat] || '--ink-3'), fillOpacity: 0.95 }).bindTooltip(`<b>${esc(r.resultat)}</b> · ${esc(r.type)}<br>${esc(r.commune)} · ${esc(PS.U.dayFmt(r.jour))} · ${esc(r.outil)}<br><span style="opacity:.75">${esc(r.actionT)}</span>`, { className: 'ps-tip' }).addTo(M.g.remontees));
     if (L_.iso) PS.D.sections.filter(s => s.statut !== 'Inactive').forEach(s => L.circle([s.lat, s.lng], { pane: 'iso', radius: s.r === 'Dakar' ? 2500 : 12000, interactive: false, stroke: false, fillColor: css('--teal'), fillOpacity: 0.16 }).addTo(M.g.iso));
     if (L_.zones) PS.ACTIONS().filter(a => a.zone).forEach(a => L.polygon(a.zone, { color: css('--amber'), weight: 2, dashArray: '6 4', fillColor: css('--amber'), fillOpacity: 0.18 }).bindTooltip(`<b>${esc(a.t)}</b><br>${esc(a.type)} · ${esc(a.st)}`, { className: 'ps-tip', sticky: true }).addTo(M.g.zones));
     if (L_.sections) PS.D.sections.forEach(s => {
@@ -169,6 +172,8 @@ window.PS = window.PS || {};
     el.innerHTML = detailHTML(); el.scrollTop = 0;
     $$('[data-close-detail]', el).forEach(b => b.addEventListener('click', () => select(null)));
     $$('[data-sel]', el).forEach(b => b.addEventListener('click', () => { const id = b.dataset.sel; const u = PS.D.byId[id]; if (u && u.level !== S.map.level) { S.map.level = u.level; renderLayersPanel(); renderLegend(); drawChoro(); drawLabels() } select(u ? { t: 'unit', id } : { t: 'sec', id }); zoomToSel() }));
+    $$('[data-hact]', el).forEach(b => b.addEventListener('click', () => PS.actionCard(PS.ACTIONS().find(a => a.id === b.dataset.hact), refreshDetail)));
+    const ha = $('[data-hall]', el); if (ha) ha.addEventListener('click', () => { S.actTab = 'historique'; S.hist = { per: '180', terr: S.map.sel.id, type: '', q: '' }; PS.go('actions') });
     $$('[data-drill]', el).forEach(b => b.addEventListener('click', () => { S.map.level = b.dataset.drill; renderLayersPanel(); renderLegend(); drawChoro(); drawLabels(); zoomToSel() }));
     const es = $('[data-edit-sec]', el); if (es) es.addEventListener('click', () => PS.editSection(es.dataset.editSec, () => { drawOverlays(); refreshDetail() }));
     const sim = $('#simN', el);
@@ -224,7 +229,17 @@ window.PS = window.PS || {};
       <div><div class="k">Superficie</div><div class="v">${fmt(u.km2)} km²</div></div><div><div class="k">Accessibilité</div><div class="v">${u.access.toLocaleString('fr-FR')}</div></div></div></div>
     <div class="sec"><div class="label">Recommandations</div>${rec.map(r => `<div class="reco"><span class="ic">${r[0]}</span><div style="flex:1">${esc(r[1])}</div></div>`).join('') || '<span class="small muted">Aucune action prioritaire détectée.</span>'}
       ${ed && u.level !== 'reg' && PS.canModule('actions') ? `<button class="btn primary sm" style="align-self:flex-start" data-new-action data-dep="${esc(u.level === 'dep' ? u.n : u.dep)}" data-type="${rec[0] ? rec[0][2] : 'Porte-à-porte'}">+ Planifier une action ici</button>` : (ed ? '' : PS.lockHTML('Territoire en lecture seule'))}</div>
-    ${sim}${kids}`;
+    ${histSec(u)}${sim}${kids}`;
+  }
+
+  function histSec(u) {
+    const h = PS.histOf(u).filter(a => a.end >= -180), cur = PS.ACTIONS().filter(a => a.st !== 'Terminée' && PS.inUnit(a, u));
+    if (!h.length && !cur.length) return `<div class="sec"><div class="label">Actions terrain</div><span class="small muted">Aucune action enregistrée sur ce territoire depuis six mois.</span></div>`;
+    const tot = h.reduce((s, a) => s + a.done, 0);
+    return `<div class="sec"><div class="label">Actions terrain · 6 derniers mois</div>
+      <div class="small">${h.length} action${h.length > 1 ? 's' : ''} terminée${h.length > 1 ? 's' : ''}, ${fmt(tot)} personnes touchées${cur.length ? ` · ${cur.length} en cours ou prévue${cur.length > 1 ? 's' : ''}` : ''}</div>
+      <div class="mini-list">${h.slice(0, 5).map(a => `<button data-hact="${a.id}"><span class="mono small muted" style="width:52px">${dayFmt(a.end)}</span><span style="flex:1">${esc(a.t)}</span><span class="small ${a.bilan ? 'muted' : ''}" style="${a.bilan ? '' : 'color:var(--amber)'}">${a.obj ? Math.round(a.done / a.obj * 100) + ' %' : ''}</span></button>`).join('')}</div>
+      ${PS.canModule('actions') ? '<button class="linkbtn" data-hall style="align-self:flex-start">Historique complet du territoire →</button>' : ''}</div>`;
   }
 
   /* ---------------- Dessin d'une zone d'action ---------------- */

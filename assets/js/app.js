@@ -25,14 +25,15 @@ window.PS = window.PS || {};
   let saved = {}; try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {} } catch (e) { saved = {} }
   const S = PS.S = {
     view: 'tableau', weights: saved.weights || { ...PS.DEFAULT_WEIGHTS }, focus: null,
-    map: { base: 'osm', level: 'reg', ind: 'typo', layers: { coords: true, sections: false, iso: false, zones: false, labels: true }, sel: null, drawing: null },
-    terrain: { tab: 'pap', door: 0, counts: { fav: 0, ind: 0, opp: 0, abs: 0 }, queue: 12, log: [], pending: [] },
+    map: { base: 'osm', level: 'reg', ind: 'typo', layers: { coords: true, sections: false, iso: false, zones: false, remontees: false, labels: true }, sel: null, drawing: null },
+    terrain: { action: null, door: 0, counts: { fav: 0, ind: 0, opp: 0, abs: 0 }, log: [], pending: [] },
     ctFilter: { q: '', role: '', cons: '' }, secFilter: { q: '', reg: '', st: '', mine: true }, actMine: true, prioLevel: 'dep'
   };
-  const extra = PS.extra = { actions: saved.actions || [], contacts: saved.contacts || [], campaigns: saved.campaigns || [], edits: saved.edits || {}, audit: saved.audit || [] };
-  PS.persist = () => { try { localStorage.setItem(KEY, JSON.stringify({ weights: S.weights, actions: extra.actions, contacts: extra.contacts, campaigns: extra.campaigns, edits: extra.edits, audit: extra.audit })) } catch (e) { } };
+  const extra = PS.extra = { actions: saved.actions || [], contacts: saved.contacts || [], campaigns: saved.campaigns || [], edits: saved.edits || {}, audit: saved.audit || [], actState: saved.actState || {}, remontees: saved.remontees || [], remState: saved.remState || {} };
+  PS.persist = () => { try { localStorage.setItem(KEY, JSON.stringify({ weights: S.weights, actions: extra.actions, contacts: extra.contacts, campaigns: extra.campaigns, edits: extra.edits, audit: extra.audit, actState: extra.actState, remontees: extra.remontees, remState: extra.remState })) } catch (e) { } };
   PS.ACTIONS = () => [...extra.actions, ...PS.D.actions];
   PS.CONTACTS = () => [...extra.contacts, ...PS.D.contacts];
+  PS.REMONTEES = () => [...extra.remontees, ...PS.D.remontees];
   PS.CAMPAIGNS = () => [...extra.campaigns, ...PS.D.campaigns];
   PS.AUDIT = () => [...extra.audit, ...PS.D.audit];
   PS.log = (a) => { const h = new Date(); extra.audit.unshift({ t: `${String(h.getHours()).padStart(2, '0')}:${String(h.getMinutes()).padStart(2, '0')}`, u: `${PS.user.nom} (${PS.role.court})`, a }); extra.audit.splice(30); PS.persist() };
@@ -57,15 +58,38 @@ window.PS = window.PS || {};
   const editScopeText = () => PS.role.edit === 'national' ? 'tout le territoire' : (PS.role.edit === 'aucun' ? 'aucune modification (lecture seule)' : perimLabel());
   PS.editScopeText = editScopeText;
   PS.lockHTML = (what = 'Lecture seule') => `<div class="lock"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>${esc(what)} : votre profil (${esc(PS.role.court)}) peut modifier ${esc(editScopeText())}.</span></div>`;
+  const ADMKEY = 'poliscope-admin-v1', IMPKEY = 'poliscope-imp';
+  const DEF_USERS = JSON.parse(JSON.stringify(PS.USERS)), DEF_ROLES = JSON.parse(JSON.stringify(PS.ROLES));
+  function loadAdmin() { try { const a = JSON.parse(localStorage.getItem(ADMKEY) || 'null'); if (a && Array.isArray(a.users) && a.users.length) PS.USERS = a.users; if (a && a.roles && a.roles.admin_general) PS.ROLES = a.roles } catch (e) { } }
+  PS.saveAdmin = () => { try { localStorage.setItem(ADMKEY, JSON.stringify({ users: PS.USERS, roles: PS.ROLES })) } catch (e) { } };
+  PS.resetAdmin = () => { PS.USERS = JSON.parse(JSON.stringify(DEF_USERS)); PS.ROLES = JSON.parse(JSON.stringify(DEF_ROLES)); try { localStorage.removeItem(ADMKEY) } catch (e) { } };
+  PS.impersonator = null;
+  PS.isAdminGeneral = () => !!PS.user && PS.user.role === 'admin_general';
   function signIn(login) {
-    const u = PS.USERS.find(x => x.login === login); if (!u) return false;
+    const u = PS.USERS.find(x => x.login === login); if (!u || u.actif === false || !PS.ROLES[u.role]) return false;
     PS.user = u; PS.role = PS.ROLES[u.role];
     try { sessionStorage.setItem(SKEY, login) } catch (e) { }
     S.focus = defaultFocus(); S.secFilter.mine = PS.role.edit !== 'national' && PS.role.edit !== 'aucun'; S.actMine = S.secFilter.mine;
     S.map.sel = null; S.map.level = u.perimetre.type === 'national' ? 'reg' : (u.perimetre.type === 'region' ? 'dep' : 'com');
+    if (S.report) S.report.terr = null;
     return true;
   }
-  function signOut() { try { sessionStorage.removeItem(SKEY) } catch (e) { } PS.user = null; PS.role = null; if (PS.mapDestroy) PS.mapDestroy(); renderLogin() }
+  function signOut() { try { sessionStorage.removeItem(SKEY); sessionStorage.removeItem(IMPKEY) } catch (e) { } PS.user = null; PS.role = null; PS.impersonator = null; if (PS.mapDestroy) PS.mapDestroy(); renderLogin() }
+  PS.impersonate = function (login) {
+    const orig = PS.impersonator || PS.user;
+    if (orig.role !== 'admin_general') { PS.toast('Seul un administrateur général peut changer de profil.'); return }
+    const target = PS.USERS.find(x => x.login === login);
+    if (!target || target.actif === false) { PS.toast('Ce compte est désactivé : activez-le avant de l’utiliser.'); return }
+    PS.log(`a ouvert une session de test en tant que ${target.nom} (${PS.ROLES[target.role].label})`);
+    if (!signIn(login)) { PS.toast('Impossible d’ouvrir ce compte : son rôle n’existe plus.'); return }
+    PS.impersonator = orig; try { sessionStorage.setItem(IMPKEY, orig.login) } catch (e) { }
+    shell(); go(PS.role.modules[0]); PS.toast(`Vous naviguez en tant que ${target.nom} (${PS.role.label}).`);
+  };
+  PS.stopImpersonation = function () {
+    const o = PS.impersonator; if (!o) return;
+    PS.impersonator = null; try { sessionStorage.removeItem(IMPKEY) } catch (e) { }
+    signIn(o.login); S.adminTab = 'comptes'; shell(); go('admin'); PS.toast(`Retour à votre compte : ${o.nom}.`);
+  };
   function defaultFocus() { const p = PS.user.perimetre; if (p.type === 'region') return PS.D.regions.find(r => r.n === p.nom).id; if (p.type === 'departement') return PS.D.depts.find(d => d.n === p.nom).id; return 'nat' }
 
   /* ================= Territoires ================= */
@@ -171,49 +195,65 @@ window.PS = window.PS || {};
   function renderLogin() {
     document.getElementById('app').innerHTML = `
     <div class="login">
-      <section class="hero">
-        <div class="brand">${PS.logoSVG(38)}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
-        <h1>Le poste de pilotage territorial des partis et coalitions.</h1>
-        <p>Voir le territoire, organiser le maillage, prioriser l’action. Une plateforme cartocentrée alimentée par les résultats CivicScope et les remontées terrain.</p>
-        <ul>
-          <li><b>01</b><span>Maillage : sièges, coordinations, sections et antennes, de la région à la commune.</span></li>
-          <li><b>02</b><span>Intelligence territoriale : résultats, participation, population, accessibilité.</span></li>
-          <li><b>03</b><span>Actions terrain : porte-à-porte, phoning, caravanes, collecte QField / KoboToolbox / ODK.</span></li>
-          <li><b>04</b><span>Décision : score de priorité, scénarios, rapports PDF par territoire.</span></li>
-        </ul>
-        <canvas id="heroMap" width="560" height="440" aria-hidden="true"></canvas>
-      </section>
-      <section class="form">
-        <div><div class="label">Connexion</div><h2>Accéder à l’espace du parti</h2></div>
-        <form id="loginForm" autocomplete="off">
-          <div class="field"><label for="lg-u">Identifiant</label><input id="lg-u" name="u" placeholder="ex. section.mbour" autocomplete="username"></div>
-          <div class="field"><label for="lg-p">Mot de passe</label><input id="lg-p" name="p" type="password" autocomplete="current-password"></div>
-          <div class="err" id="lg-err" role="alert"></div>
-          <button class="btn primary" type="submit" style="justify-content:center">Se connecter</button>
-        </form>
-        <div class="label">Ou choisissez un profil de démonstration</div>
-        <div class="profiles">${PS.USERS.map((u, i) => { const r = PS.ROLES[u.role]; return `<button class="profile" data-login="${u.login}"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span><b>${esc(r.label)}</b><span>${esc(u.nom)} · ${esc(perimLabel(u))}<br><span class="mono">${esc(u.login)} / ${esc(u.password)}</span></span></span><span class="go">Entrer →</span></button>` }).join('')}</div>
-        <p class="notice">Démonstration : comptes fictifs, mot de passe affiché sous chaque profil. L’authentification réelle repose sur Keycloak (OpenID Connect) et les droits sont appliqués par l’API et la base de données.</p>
-      </section>
+      <canvas id="loginMap" aria-hidden="true"></canvas><div class="login-veil"></div>
+      <div class="login-inner">
+        <section class="login-desc">
+          <div class="brand">${PS.logoSVG(38)}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
+          <h1>Le poste de pilotage territorial des partis et coalitions.</h1>
+          <p>Voir le territoire, organiser le maillage, prioriser l’action. Une plateforme cartocentrée alimentée par les résultats CivicScope et les remontées terrain.</p>
+          <ul>
+            <li><b>01</b><span>Maillage : sièges, coordinations, sections et antennes, de la région à la commune.</span></li>
+            <li><b>02</b><span>Intelligence territoriale : résultats, participation, population, accessibilité.</span></li>
+            <li><b>03</b><span>Actions terrain : porte-à-porte, phoning, caravanes, remontées de terrain.</span></li>
+            <li><b>04</b><span>Décision : score de priorité, scénarios, rapports PDF par territoire.</span></li>
+          </ul>
+        </section>
+        <section class="login-card" aria-labelledby="lgTitle">
+          <div class="label">Connexion</div>
+          <h2 id="lgTitle">Accéder à l’espace du parti</h2>
+          <form id="loginForm" autocomplete="on" novalidate>
+            <div class="field"><label for="lg-u">Identifiant</label><input id="lg-u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+            <div class="field"><label for="lg-p">Mot de passe</label><input id="lg-p" name="password" type="password" autocomplete="current-password" required></div>
+            <div class="err" id="lg-err" role="alert"></div>
+            <button class="btn primary" type="submit">Se connecter</button>
+          </form>
+          <p class="small muted" style="margin:0">Vos identifiants vous sont remis par l’administrateur de votre parti. Mot de passe oublié : contactez-le.</p>
+        </section>
+        <div class="login-spacer" aria-hidden="true"></div>
+      </div>
+      <footer class="login-foot"><span>PoliScope © CEGIT — Centre d’Expertise en Géomatique et Ingénierie Territoriale</span><span>Version de démonstration · données du parti fictives</span></footer>
     </div>`;
     $('#loginForm').addEventListener('submit', e => {
       e.preventDefault();
-      const u = $('#lg-u').value.trim().toLowerCase(), p = $('#lg-p').value;
-      if (!PS.USERS.some(x => x.login === u)) { $('#lg-err').textContent = 'Identifiant inconnu. Essayez l’un des profils de démonstration ci-dessous.'; return }
-      if (p !== PS.USERS.find(x => x.login === u).password) { $('#lg-err').textContent = 'Mot de passe incorrect. Les mots de passe de démonstration sont indiqués sous chaque profil.'; return }
-      enter(u);
+      const login = $('#lg-u').value.trim().toLowerCase(), p = $('#lg-p').value, err = $('#lg-err');
+      if (!login || !p) { err.textContent = 'Saisissez votre identifiant et votre mot de passe.'; return }
+      const u = PS.USERS.find(x => x.login === login);
+      if (!u || u.password !== p) { err.textContent = 'Identifiant ou mot de passe incorrect.'; $('#lg-p').select(); return }
+      if (u.actif === false) { err.textContent = 'Ce compte est désactivé. Contactez l’administrateur de votre parti.'; return }
+      enter(login);
     });
-    $$('[data-login]').forEach(b => b.addEventListener('click', () => enter(b.dataset.login)));
-    drawHero();
+    $('#lg-u').focus();
+    drawLoginMap();
   }
-  function drawHero() {
-    const cv = $('#heroMap'); if (!cv || !cv.getContext) return; const g = cv.getContext('2d');
-    const B = [-17.6, 12.25, -11.3, 16.75], W = cv.width, H = cv.height, k = Math.min(W / (B[2] - B[0]), H / (B[3] - B[1]) / 1.03);
-    const P = ([x, y]) => [(x - B[0]) * k, H - (y - B[1]) * k * 1.03];
-    const path = geom => { const ps = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates; g.beginPath(); for (const p of ps) for (const ring of p) ring.forEach((pt, i) => { const [x, y] = P(pt); i ? g.lineTo(x, y) : g.moveTo(x, y) }); };
-    for (const d of PS.D.depts) { path(d.geom); g.fillStyle = 'rgba(255,255,255,.04)'; g.fill(); g.strokeStyle = 'rgba(201,220,218,.28)'; g.lineWidth = 1; g.stroke() }
-    for (const s of PS.D.sections) { const [x, y] = P([s.lng, s.lat]); g.beginPath(); g.arc(x, y, 1.8, 0, 7); g.fillStyle = s.statut === 'Active' ? '#3fb6b1' : (s.statut === 'À relancer' ? '#e3a83a' : '#e7795f'); g.fill() }
+  function drawLoginMap() {
+    const cv = $('#loginMap'); if (!cv || !cv.getContext) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr; const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const B = [-17.6, 12.25, -11.3, 16.75], kx = Math.cos(14.5 * Math.PI / 180);
+    const k = Math.min(W * 0.96 / ((B[2] - B[0]) * kx), H * 0.92 / (B[3] - B[1]));
+    const ox = (W - (B[2] - B[0]) * kx * k) / 2, oy = (H - (B[3] - B[1]) * k) / 2;
+    const P = ([x, y]) => [ox + (x - B[0]) * kx * k, H - oy - (y - B[1]) * k];
+    const path = geom => { const ps = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates; g.beginPath(); for (const p of ps) for (const ring of p) { ring.forEach((pt, i) => { const [x, y] = P(pt); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath() } };
+    g.clearRect(0, 0, W, H);
+    const tint = { bastion: 'rgba(63,182,177,.20)', concurrentielle: 'rgba(201,220,218,.07)', renforcer: 'rgba(227,168,58,.16)', conquerir: 'rgba(141,155,245,.13)' };
+    for (const c of PS.D.communes) { path(c.geom); g.fillStyle = tint[PS.typo(c)]; g.fill('evenodd'); g.strokeStyle = 'rgba(201,220,218,.12)'; g.lineWidth = 0.6; g.stroke() }
+    for (const d of PS.D.depts) { path(d.geom); g.strokeStyle = 'rgba(201,220,218,.22)'; g.lineWidth = 0.9; g.stroke() }
+    for (const r of PS.D.regions) { path(r.geom); g.strokeStyle = 'rgba(201,220,218,.45)'; g.lineWidth = 1.4; g.stroke() }
+    const col = { 'Active': '63,182,177', 'À relancer': '227,168,58', 'Inactive': '231,121,95' };
+    for (const s of PS.D.sections) { const [x, y] = P([s.lng, s.lat]); g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = `rgba(${col[s.statut]},.18)`; g.fill(); g.beginPath(); g.arc(x, y, 1.9, 0, 7); g.fillStyle = `rgba(${col[s.statut]},.95)`; g.fill() }
+    for (const c of PS.D.coordsReg) { const [x, y] = P([c.lng, c.lat]); g.strokeStyle = 'rgba(227,168,58,.9)'; g.lineWidth = 1.5; g.strokeRect(x - 4, y - 4, 8, 8) }
   }
+  let lmT; window.addEventListener('resize', () => { clearTimeout(lmT); lmT = setTimeout(() => { if (!PS.user && $('#loginMap')) drawLoginMap() }, 150) });
   function enter(login) { if (!signIn(login)) return; PS.log('s’est connecté·e'); shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]); PS.toast(`Bienvenue ${PS.user.nom}. Profil : ${PS.role.label}.`) }
 
   /* ================= Shell ================= */
@@ -229,12 +269,13 @@ window.PS = window.PS || {};
   };
   const ic = k => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
   function shell() {
-    const u = PS.user, i = PS.USERS.indexOf(u);
+    const u = PS.user, i = Math.max(0, PS.USERS.indexOf(u));
     document.getElementById('app').innerHTML = `
     <div class="app">
       <header class="topbar">
         <div class="brand">${PS.logoSVG()}<div><b>PoliScope</b><small>Pilotage territorial · CEGIT</small></div></div>
         <span class="demo-tag" title="Les données du parti sont simulées">Démo · données fictives</span>
+        ${PS.impersonator ? `<div class="impbar" role="status"><span>Session de test : <b>${esc(u.nom)}</b> · ${esc(PS.role.label)}</span><button id="impBack">Revenir à mon compte</button></div>` : ''}
         <div class="spacer"></div>
         <div class="party"><span class="dot"></span><span>Parti fictif « Ànd Liggéey »</span></div>
         <div class="usermenu"><span class="avatar" style="background:${css(AV[i % 5])}">${esc(initials(u.nom))}</span><span class="who"><b>${esc(u.nom)}</b><span>${esc(PS.role.court)} · ${esc(perimLabel())}</span></span><button id="logout">Se déconnecter</button></div>
@@ -246,6 +287,7 @@ window.PS = window.PS || {};
       <main id="main" tabindex="-1"></main>
     </div>`;
     $('#logout').addEventListener('click', () => { PS.log('s’est déconnecté·e'); signOut() });
+    const ib = $('#impBack'); if (ib) ib.addEventListener('click', PS.stopImpersonation);
   }
   function setNav() {
     $$('.rail a').forEach(a => a.setAttribute('aria-current', a.dataset.view === S.view ? 'page' : 'false'));
@@ -505,20 +547,26 @@ window.PS = window.PS || {};
      ACTIONS TERRAIN
      ========================================================= */
   const COLS = ['À planifier', 'Planifiée', 'En cours', 'Terminée'];
+  const pctOf = a => a.obj ? Math.round(a.done / a.obj * 100) : 0;
+  PS.saveActState = a => { if (!String(a.id).startsWith('ax')) extra.actState[a.id] = { st: a.st, done: a.done, end: a.end, date: a.date, bilan: a.bilan || null }; PS.persist() };
+  PS.histOf = u => PS.ACTIONS().filter(a => a.st === 'Terminée' && PS.inUnit(a, u)).sort((x, y) => y.end - x.end);
   VIEWS.actions = {
     html() {
-      const canAny = PS.role.edit !== 'aucun';
-      return `<div class="view-head"><div><div class="label">Actions terrain</div><h1>Organiser et suivre les actions</h1><p>Porte-à-porte, phoning, caravanes, réunions et placement de cartes. Vous pouvez créer et faire avancer les actions de : <b>${esc(editScopeText())}</b>.</p></div>
-      <div class="actions">${PS.role.edit !== 'national' ? `<div class="seg" id="amine" style="min-width:250px"><button data-m="1" aria-pressed="${S.actMine}">Mon périmètre</button><button data-m="0" aria-pressed="${!S.actMine}">Tout le Sénégal</button></div>` : ''}
-      <select id="afType" class="terr-sel" aria-label="Type d’action"><option value="">Tous les types</option>${Object.keys(PS.D.TYPES).map(t => `<option>${t}</option>`).join('')}</select>${canAny ? '<button class="btn primary" data-new-action>+ Nouvelle action</button>' : ''}</div></div>
-      <div class="kanban" id="kanban"></div>`;
+      const canAny = PS.role.edit !== 'aucun', tab = S.actTab || 'suivi';
+      return `<div class="view-head"><div><div class="label">Actions terrain</div><h1>Organiser et suivre les actions</h1><p>Porte-à-porte, phoning, caravanes, réunions et placement de cartes. Vous pouvez créer, faire avancer et clôturer les actions de : <b>${esc(editScopeText())}</b>.</p></div>
+      <div class="actions">${canAny ? '<button class="btn primary" data-new-action>+ Nouvelle action</button>' : ''}</div></div>
+      <div class="tabs" role="tablist"><button role="tab" data-atab2="suivi" aria-selected="${tab === 'suivi'}">Suivi en cours</button><button role="tab" data-atab2="historique" aria-selected="${tab === 'historique'}">Historique et bilans</button></div>
+      ${tab === 'suivi' ? `<div class="filters" style="margin-bottom:12px">${PS.role.edit !== 'national' ? `<div class="seg" id="amine" style="min-width:250px"><button data-m="1" aria-pressed="${S.actMine}">Mon périmètre</button><button data-m="0" aria-pressed="${!S.actMine}">Tout le Sénégal</button></div>` : ''}<select id="afType" class="terr-sel" aria-label="Type d’action"><option value="">Tous les types</option>${Object.keys(PS.D.TYPES).map(t => `<option>${t}</option>`).join('')}</select></div><div class="kanban" id="kanban"></div>` : histHTML()}`;
     },
     bind() {
+      $$('[data-atab2]').forEach(b => b.addEventListener('click', () => { S.actTab = b.dataset.atab2; render() }));
+      if ((S.actTab || 'suivi') === 'historique') { bindHist(); return }
       const draw = () => {
         const ty = $('#afType').value;
-        const A = PS.ACTIONS().filter(a => (!S.actMine || PS.canEdit(a)) && (!ty || a.type === ty));
-        $('#kanban').innerHTML = COLS.map(c => { const it = A.filter(a => a.st === c); return `<div class="col"><h4>${c}<span class="num">${it.length}</span></h4>${it.map(a => { const p = a.obj ? Math.min(100, Math.round(a.done / a.obj * 100)) : 0; const ed = PS.canEdit(a); return `<div class="card ${a._new ? 'new' : ''}" data-act="${a.id}" tabindex="0"><div class="ty"><span class="mono" style="color:${css('--teal')}">${PS.D.TYPES[a.type]}</span>${esc(a.type)}${a.zone ? ' · zone dessinée' : ''}${ed ? '' : ' · <span title="Hors de votre périmètre">lecture</span>'}</div><h5>${esc(a.t)}</h5><div class="meta"><span>${esc(a.dep)}</span><span>${a.st === 'Terminée' ? 'terminée le ' + dayFmt(a.end) : (a.date < 0 ? 'depuis le ' + dayFmt(a.date) : 'le ' + dayFmt(a.date))}</span></div>${a.st !== 'À planifier' ? `<div class="track"><div class="fill" style="width:${p}%"></div></div><div class="meta"><span>${fmt(a.done)} / ${fmt(a.obj)}</span><span>${a.vol} bénévoles</span></div>` : `<div class="meta"><span>${esc(a.team)}</span><span>obj. ${fmt(a.obj)}</span></div>`}</div>` }).join('') || '<p class="small muted" style="margin:4px">Aucune action.</p>'}</div>` }).join('');
-        $$('#kanban [data-act]').forEach(el => { const open = () => actionCard(PS.ACTIONS().find(a => a.id === el.dataset.act), draw); el.addEventListener('click', open); el.addEventListener('keydown', e => { if (e.key === 'Enter') open() }) });
+        const A = PS.ACTIONS().filter(a => (!S.actMine || PS.canEdit(a)) && (!ty || a.type === ty) && !(a.st === 'Terminée' && a.end < -30));
+        $('#kanban').innerHTML = COLS.map(c => { const it = A.filter(a => a.st === c); return `<div class="col"><h4>${c}${c === 'Terminée' ? ' · 30 j' : ''}<span class="num">${it.length}</span></h4>${it.map(a => { const p = Math.min(100, pctOf(a)); const ed = PS.canEdit(a); return `<div class="card ${a._new ? 'new' : ''}" data-act="${a.id}" tabindex="0"><div class="ty"><span class="mono" style="color:${css('--teal')}">${PS.D.TYPES[a.type]}</span>${esc(a.type)}${a.zone ? ' · zone dessinée' : ''}${ed ? '' : ' · <span title="Hors de votre périmètre">lecture</span>'}</div><h5>${esc(a.t)}</h5><div class="meta"><span>${esc(a.dep)}</span><span>${a.st === 'Terminée' ? 'terminée le ' + dayFmt(a.end) : (a.date < 0 ? 'depuis le ' + dayFmt(a.date) : 'le ' + dayFmt(a.date))}</span></div>${a.st !== 'À planifier' ? `<div class="track"><div class="fill" style="width:${p}%"></div></div><div class="meta"><span>${fmt(a.done)} / ${fmt(a.obj)}</span><span>${a.st === 'Terminée' ? (a.bilan ? 'bilan saisi' : 'bilan à saisir') : a.vol + ' bénévoles'}</span></div>` : `<div class="meta"><span>${esc(a.team)}</span><span>obj. ${fmt(a.obj)}</span></div>`}</div>` }).join('') || '<p class="small muted" style="margin:4px">Aucune action.</p>'}${c === 'Terminée' ? '<button class="linkbtn" data-goto-hist style="align-self:flex-start">Voir tout l’historique →</button>' : ''}</div>` }).join('');
+        $$('#kanban [data-act]').forEach(el => { const open = () => PS.actionCard(PS.ACTIONS().find(a => a.id === el.dataset.act), draw); el.addEventListener('click', open); el.addEventListener('keydown', e => { if (e.key === 'Enter') open() }) });
+        const gh = $('[data-goto-hist]'); if (gh) gh.addEventListener('click', () => { S.actTab = 'historique'; render() });
         extra.actions.forEach(a => delete a._new);
       };
       $('#afType').addEventListener('change', draw);
@@ -526,17 +574,90 @@ window.PS = window.PS || {};
       draw();
     }
   };
-  function actionCard(a, redraw) {
-    const p = a.obj ? Math.min(100, Math.round(a.done / a.obj * 100)) : 0, i = COLS.indexOf(a.st), ed = PS.canEdit(a);
-    const m = PS.modal(a.t, `<div class="row"><span class="chip s-neutral">${esc(a.type)}</span><span class="chip ${a.st === 'Terminée' ? 's-ok' : (a.st === 'En cours' ? 's-warn' : 's-neutral')}">${a.st}</span><span class="small muted">${esc(a.dep)} · ${esc(a.r)}</span></div>
+  function histHTML() {
+    const H = S.hist = S.hist || { per: '180', terr: S.focus || 'nat', type: '', q: '' };
+    return `<section class="panel"><header><div class="filters">
+        ${PS.terrSelect('hf-t', H.terr, false)}
+        <select id="hf-p" class="terr-sel" aria-label="Période">${[['30', '30 derniers jours'], ['90', '3 derniers mois'], ['180', '6 derniers mois'], ['all', 'Tout l’historique']].map(([k, l]) => `<option value="${k}" ${H.per === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="hf-ty" class="terr-sel" aria-label="Type"><option value="">Tous les types</option>${Object.keys(PS.D.TYPES).map(t => `<option ${H.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <input type="search" id="hf-q" placeholder="Action, commune, équipe…" value="${esc(H.q)}" aria-label="Rechercher">
+      </div><span class="right"><button class="btn sm" id="hf-exp">Exporter (CSV)</button></span></header>
+      <div class="kpis kpis-4" id="hf-kpi"></div>
+      <div class="tbl-wrap" id="hf-tbl"></div></section>`;
+  }
+  function histRows() {
+    const H = S.hist, u = PS.unit(H.terr), q = H.q.toLowerCase();
+    return PS.histOf(u).filter(a => (H.per === 'all' || a.end >= -(+H.per)) && (!H.type || a.type === H.type) && (!q || (a.t + ' ' + a.dep + ' ' + (a.commune || '') + ' ' + a.team).toLowerCase().includes(q)));
+  }
+  function bindHist() {
+    const H = S.hist;
+    const draw = () => {
+      const rows = histRows();
+      const touched = rows.reduce((s, a) => s + a.done, 0), att = rows.length ? Math.round(rows.reduce((s, a) => s + Math.min(150, pctOf(a)), 0) / rows.length) : 0;
+      const pap = rows.filter(a => a.bilan && a.bilan.favorables != null), fav = pap.reduce((s, a) => s + a.bilan.favorables, 0), base = pap.reduce((s, a) => s + a.bilan.favorables + a.bilan.indecis + a.bilan.refus, 0);
+      const noBilan = rows.filter(a => !a.bilan).length;
+      $('#hf-kpi').innerHTML = [['Actions terminées', fmt(rows.length), noBilan ? `${noBilan} bilan${noBilan > 1 ? 's' : ''} à saisir` : 'tous les bilans saisis'], ['Personnes touchées', fmt(touched), 'contacts, participants, cartes'], ['Atteinte moyenne des objectifs', att + ' %', 'réalisé ÷ objectif'], ['Accueil favorable', base ? Math.round(fav / base * 100) + ' %' : '—', 'porte-à-porte et phoning, hors absents']].map(k => `<div class="kpi"><div class="label">${k[0]}</div><div class="v">${k[1]}</div><div class="d muted">${k[2]}</div></div>`).join('');
+      $('#hf-tbl').innerHTML = rows.length ? `<table class="tbl"><thead><tr><th>Terminée le</th><th>Action</th><th>Territoire</th><th>Équipe</th><th class="n">Objectif</th><th class="n">Réalisé</th><th>Atteinte</th><th>Bilan</th></tr></thead><tbody>${rows.map(a => { const p = pctOf(a); return `<tr class="click" data-h="${a.id}"><td class="mono small">${dayFmt(a.end)}</td><td><b>${esc(a.t)}</b><div class="small muted">${esc(a.type)}</div></td><td class="small">${esc(a.commune ? a.commune + ' · ' : '')}${esc(a.dep)}</td><td class="small">${esc(a.team)}</td><td class="n">${fmt(a.obj)}</td><td class="n">${fmt(a.done)}</td><td><div class="bar-cell"><div class="track"><div class="fill ${p < 80 ? 'amber' : ''}" style="width:${Math.min(100, p)}%"></div></div><span class="num small">${p} %</span></div></td><td>${a.bilan ? '<span class="chip s-ok">Saisi</span>' : '<span class="chip s-warn">À saisir</span>'}</td></tr>` }).join('')}</tbody></table>` : '<p class="body muted">Aucune action terminée pour ces critères. Élargissez la période ou le territoire.</p>';
+      $$('[data-h]').forEach(r => r.addEventListener('click', () => PS.actionCard(PS.ACTIONS().find(a => a.id === r.dataset.h), draw)));
+    };
+    $('#hf-t').addEventListener('change', e => { H.terr = e.target.value; draw() });
+    $('#hf-p').addEventListener('change', e => { H.per = e.target.value; draw() });
+    $('#hf-ty').addEventListener('change', e => { H.type = e.target.value; draw() });
+    $('#hf-q').addEventListener('input', e => { H.q = e.target.value; draw() });
+    $('#hf-exp').addEventListener('click', () => {
+      const rows = histRows(), c = v => { v = String(v ?? ''); return /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v };
+      const txt = [['termine_le', 'action', 'type', 'commune', 'departement', 'equipe', 'objectif', 'realise', 'atteinte_pct', 'favorables', 'indecis', 'refus', 'absents', 'participants', 'cartes', 'resume', 'difficultes'], ...rows.map(a => { const b = a.bilan || {}; return [dayFmt(a.end) + ' 2026', a.t, a.type, a.commune || '', a.dep, a.team, a.obj, a.done, pctOf(a), b.favorables ?? '', b.indecis ?? '', b.refus ?? '', b.absents ?? '', b.participants ?? '', b.cartes ?? '', b.resume || '', b.difficultes || ''] })].map(r => r.map(c).join(';')).join('\n');
+      try { const l = document.createElement('a'); l.href = URL.createObjectURL(new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' })); l.download = 'poliscope_historique_actions.csv'; document.body.appendChild(l); l.click(); l.remove(); PS.log('a exporté l’historique des actions'); PS.toast(`${rows.length} actions exportées.`) } catch (e) { PS.toast('Téléchargement bloqué par le navigateur.') }
+    });
+    draw();
+  }
+  function bilanHTML(a) {
+    const b = a.bilan; if (!b) return '';
+    const parts = b.favorables != null ? `<div class="kv"><div><div class="k">Favorables</div><div class="v">${fmt(b.favorables)}</div></div><div><div class="k">Indécis</div><div class="v">${fmt(b.indecis)}</div></div><div><div class="k">Pas intéressés</div><div class="v">${fmt(b.refus)}</div></div><div><div class="k">Absents</div><div class="v">${fmt(b.absents)}</div></div>${b.nouveauxContacts != null ? `<div><div class="k">Nouveaux contacts (consentants)</div><div class="v">${fmt(b.nouveauxContacts)}</div></div>` : ''}</div>` : b.cartes != null ? `<div class="kv"><div><div class="k">Cartes placées</div><div class="v">${fmt(b.cartes)}</div></div></div>` : `<div class="kv"><div><div class="k">Participants</div><div class="v">${fmt(b.participants)}</div></div></div>`;
+    return `<div class="bilan"><div class="label">Bilan</div>${parts}${b.resume ? `<p style="margin:0"><b>À retenir :</b> ${esc(b.resume)}</p>` : ''}${b.difficultes ? `<p style="margin:0"><b>Difficultés :</b> ${esc(b.difficultes)}</p>` : ''}</div>`;
+  }
+  PS.bilanHTML = bilanHTML;
+  PS.actionCard = function (a, redraw) {
+    const p = pctOf(a), i = COLS.indexOf(a.st), ed = PS.canEdit(a);
+    const rm = PS.REMONTEES().filter(r => r.action === a.id);
+    const m = PS.modal(a.t, `<div class="row"><span class="chip s-neutral">${esc(a.type)}</span><span class="chip ${a.st === 'Terminée' ? 's-ok' : (a.st === 'En cours' ? 's-warn' : 's-neutral')}">${a.st}${a.st === 'Terminée' ? ' le ' + dayFmt(a.end) : ''}</span><span class="small muted">${esc(a.commune ? a.commune + ' · ' : '')}${esc(a.dep)} · ${esc(a.r)}</span></div>
       <div class="kv"><div><div class="k">Équipe</div><div class="v" style="font-size:14px">${esc(a.team)}</div></div><div><div class="k">Bénévoles</div><div class="v">${a.vol}</div></div><div><div class="k">Objectif</div><div class="v">${fmt(a.obj)}</div></div><div><div class="k">Réalisé</div><div class="v">${fmt(a.done)} <span class="muted" style="font-size:13px">(${p} %)</span></div></div>
       ${a.menages ? `<div><div class="k">Ménages estimés dans la zone</div><div class="v">${fmt(a.menages)}</div></div><div><div class="k">Surface</div><div class="v">${a.km2.toFixed(1)} km²</div></div>` : ''}</div>
-      ${a.st !== 'À planifier' ? `<div class="bar-cell"><div class="track" style="height:10px"><div class="fill" style="width:${p}%"></div></div></div>` : ''}
+      ${a.st !== 'À planifier' ? `<div class="bar-cell"><div class="track" style="height:10px"><div class="fill" style="width:${Math.min(100, p)}%"></div></div></div>` : ''}
       ${a.note ? `<p style="margin:0">${esc(a.note)}</p>` : ''}
-      ${ed ? '<p class="notice">Les retours (portes frappées, appels, contacts favorables) remontent depuis QField, KoboToolbox, ODK Collect ou l’appli PoliScope, y compris hors connexion.</p>' : PS.lockHTML('Action en lecture seule')}`,
-      `<button class="btn" data-close>Fermer</button>${a.zone ? '<button class="btn" id="ac-map">Voir la zone</button>' : ''}${i < 3 && ed ? `<button class="btn primary" id="ac-next">Passer à « ${COLS[i + 1]} »</button>` : ''}`);
-    const nx = $('#ac-next', m); if (nx) nx.addEventListener('click', () => { a.st = COLS[i + 1]; if (a.st === 'Terminée') { a.end = 0; if (!a.done) a.done = Math.round(a.obj * 0.9) } if (a.st === 'En cours' && !a.done) { a.done = Math.round(a.obj * 0.08); a.date = 0 } PS.log(`a passé l’action « ${a.t} » à « ${a.st} »`); PS.persist(); PS.closeModal(); redraw && redraw(); PS.toast(`Action passée à « ${a.st} ».`) });
+      ${rm.length ? `<div class="small"><b>${rm.length} remontées terrain</b> rattachées (${[...new Set(rm.map(r => r.outil))].join(', ')}) · <button class="linkbtn" id="ac-rm">les voir</button></div>` : ''}
+      ${a.st === 'Terminée' ? (a.bilan ? bilanHTML(a) : `<p class="notice">Le bilan de cette action n’a pas encore été saisi.</p>`) : ''}
+      ${ed ? '' : PS.lockHTML('Action en lecture seule')}`,
+      `<button class="btn" data-close>Fermer</button>${a.zone ? '<button class="btn" id="ac-map">Voir la zone</button>' : ''}${ed && a.st === 'Terminée' ? `<button class="btn primary" id="ac-bilan">${a.bilan ? 'Modifier le bilan' : 'Saisir le bilan'}</button>` : ''}${i < 2 && ed ? `<button class="btn primary" id="ac-next">Passer à « ${COLS[i + 1]} »</button>` : ''}${i === 2 && ed ? '<button class="btn primary" id="ac-close">Clôturer et saisir le bilan</button>' : ''}`);
+    const nx = $('#ac-next', m); if (nx) nx.addEventListener('click', () => { a.st = COLS[i + 1]; if (a.st === 'En cours' && !a.done) { a.done = Math.round(a.obj * 0.08); a.date = 0 } PS.log(`a passé l’action « ${a.t} » à « ${a.st} »`); PS.saveActState(a); PS.closeModal(); redraw && redraw(); PS.toast(`Action passée à « ${a.st} ».`) });
+    const cl = $('#ac-close', m); if (cl) cl.addEventListener('click', () => bilanForm(a, true, redraw));
+    const bb = $('#ac-bilan', m); if (bb) bb.addEventListener('click', () => bilanForm(a, false, redraw));
     const mp = $('#ac-map', m); if (mp) mp.addEventListener('click', () => { PS.closeModal(); S.map.layers.zones = true; const d = PS.D.depts.find(x => x.n === a.dep); go('carte', { sel: { t: 'unit', id: d.id } }) });
+    const rb = $('#ac-rm', m); if (rb) rb.addEventListener('click', () => { PS.closeModal(); S.terrTab = 'remontees'; S.rmFilter = { action: a.id, statut: '', q: '' }; go('terrain') });
+  };
+  function bilanForm(a, closing, redraw) {
+    const b = a.bilan || {}, rm = PS.REMONTEES().filter(r => r.action === a.id && r.statut === 'Validée');
+    const cnt = k => rm.filter(r => r.resultat === k).length;
+    const pap = a.type === 'Porte-à-porte' || a.type === 'Phoning' || a.type === 'Caravane' && rm.length;
+    let sug = {};
+    if (pap && b.favorables == null && rm.length) { const raw = { favorables: cnt('Favorable') + cnt('Viendra'), indecis: cnt('Indécis') + cnt('À rappeler'), refus: cnt('Pas intéressé') + cnt('Refus'), absents: cnt('Absent') + cnt('Pas de réponse') }; const tot = Object.values(raw).reduce((x, y) => x + y, 0) || 1; sug = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, Math.round(a.done * v / tot)])); sug.absents = Math.max(0, a.done - sug.favorables - sug.indecis - sug.refus) }
+    const v = k => b[k] ?? sug[k] ?? '';
+    const m = PS.modal(`${closing ? 'Clôturer' : 'Bilan'} : ${a.t}`, `
+      <div class="grid g-2"><div class="field"><label for="bl-r">Réalisé (contacts, participants, cartes…)</label><input id="bl-r" type="number" min="0" value="${b.realise ?? a.done}"></div><div class="field"><span class="flabel">Objectif</span><div class="num" style="padding:8px 0">${fmt(a.obj)}</div></div></div>
+      ${pap ? `<div class="grid g-2">${[['favorables', 'Favorables'], ['indecis', 'Indécis'], ['refus', 'Pas intéressés'], ['absents', 'Absents'], ['nouveauxContacts', 'Nouveaux contacts consentants']].map(([k, l]) => `<div class="field"><label for="bl-${k}">${l}</label><input id="bl-${k}" type="number" min="0" value="${v(k)}"></div>`).join('')}</div>${rm.length && b.favorables == null ? `<p class="small muted" style="margin:0">Estimation : proportions observées dans les ${rm.length} remontées terrain validées, appliquées au réalisé. Corrigez avec les totaux de l’équipe.</p>` : ''}`
+        : a.type === 'Placement de cartes' ? `<div class="field"><label for="bl-cartes">Cartes placées</label><input id="bl-cartes" type="number" min="0" value="${b.cartes ?? a.done}"></div>` : `<div class="field"><label for="bl-participants">Participants</label><input id="bl-participants" type="number" min="0" value="${b.participants ?? a.done}"></div>`}
+      <div class="field"><label for="bl-res">À retenir</label><textarea id="bl-res" placeholder="Accueil, thèmes évoqués, relais identifiés…">${esc(b.resume || '')}</textarea></div>
+      <div class="field"><label for="bl-dif">Difficultés rencontrées</label><textarea id="bl-dif" placeholder="Logistique, accès, sécurité, effectifs…" style="min-height:50px">${esc(b.difficultes || '')}</textarea></div>`,
+      `<button class="btn" data-close>Annuler</button><button class="btn primary" id="bl-ok">${closing ? 'Clôturer l’action' : 'Enregistrer le bilan'}</button>`);
+    $('#bl-ok', m).addEventListener('click', () => {
+      const num = id => { const el = $('#bl-' + id, m); return el && el.value !== '' ? Math.max(0, +el.value) : undefined };
+      const nb = { realise: num('r') ?? a.done, resume: $('#bl-res', m).value.trim(), difficultes: $('#bl-dif', m).value.trim() };
+      ['favorables', 'indecis', 'refus', 'absents', 'nouveauxContacts', 'cartes', 'participants'].forEach(k => { const x = num(k); if (x !== undefined) nb[k] = x });
+      a.bilan = nb; a.done = nb.realise;
+      if (closing) { a.st = 'Terminée'; a.end = 0 }
+      PS.log(closing ? `a clôturé l’action « ${a.t} » (${pctOf(a)} % de l’objectif)` : `a mis à jour le bilan de « ${a.t} »`);
+      PS.saveActState(a); PS.closeModal(); redraw && redraw(); PS.toast(closing ? 'Action clôturée : elle figure dans l’historique avec son bilan.' : 'Bilan enregistré.');
+    });
   }
   PS.actionForm = function (pre) {
     const ds = editableDepts();
@@ -569,86 +690,313 @@ window.PS = window.PS || {};
      COLLECTE TERRAIN
      ========================================================= */
   const DOORS = [{ a: 'Rue 12 × Rue 7, maison 4', h: 'Ménage de 9 personnes · 1re visite' }, { a: 'Rue 12, maison 6 (boutique)', h: 'Commerçant · déjà sympathisant' }, { a: 'Rue 14, concession Ndiaye', h: '3 ménages · relance demandée le 3 oct.' }, { a: 'Rue 14, maison 2', h: '1re visite' }, { a: 'Place du marché, étal 18', h: 'Commerçante · tag Femmes' }, { a: 'Rue 15, maison 9', h: 'Absent lors du dernier passage' }];
+  const RCHIP = { 'Favorable': 's-ok', 'Viendra': 's-ok', 'Indécis': 's-warn', 'À rappeler': 's-warn', 'Pas intéressé': 's-bad', 'Refus': 's-bad', 'Absent': 's-neutral', 'Pas de réponse': 's-neutral' };
+  const STCHIP = { 'Validée': 's-ok', 'Rejetée': 's-neutral', 'Doublon possible': 's-warn', 'Consentement manquant': 's-warn', 'Hors périmètre': 's-bad' };
+  const STHELP = { 'Doublon possible': 'Même position et même jour qu’une autre fiche : vérifier qu’il ne s’agit pas d’une double saisie.', 'Consentement manquant': 'Un numéro a été saisi sans case de consentement cochée : le contact ne sera pas enregistré dans le CRM.', 'Hors périmètre': 'Fiche saisie en dehors du département de l’équipe : à réaffecter ou rejeter.' };
+  const isOpen = r => r.statut !== 'Validée' && r.statut !== 'Rejetée';
+  function terrActions() { return PS.ACTIONS().filter(a => (a.type === 'Porte-à-porte' || a.type === 'Phoning') && (a.st === 'En cours' || a.st === 'Planifiée') && PS.canEdit(a)) }
+  function setRemStatut(r, st) { r.statut = st; if (String(r.id).startsWith('rx')) PS.persist(); else { extra.remState[r.id] = st; PS.persist() } }
+  function randomPointIn(a) {
+    const d = PS.D.depts.find(x => x.n === a.dep); if (!d) return null;
+    const cs = a.commune ? d.children.filter(c => c.n === a.commune) : d.children;
+    const c = cs[Math.floor(Math.random() * cs.length)], bb = PS.D.bbox(c.geom);
+    for (let k = 0; k < 300; k++) { const x = bb[0] + Math.random() * (bb[2] - bb[0]), y = bb[1] + Math.random() * (bb[3] - bb[1]); if (PS.D.inGeom([x, y], c.geom)) return { lat: +y.toFixed(5), lng: +x.toFixed(5), commune: c.n } }
+    return { lat: c.lat, lng: c.lng, commune: c.n };
+  }
   VIEWS.terrain = {
     html() {
-      const T = S.terrain;
-      const batches = [['09:15', 'QFieldCloud', 'Porte-à-porte Pikine', 214, 's-ok'], ['08:40', 'KoboToolbox', 'Recensement des antennes — Kaolack', 58, 's-ok'], ['hier', 'ODK Central', 'Caravane Podor — émargements', 131, 's-ok'], ['hier', 'QFieldCloud', 'Relevé GPS des permanences — Mbour', 12, 's-warn']];
-      return `<div class="view-head"><div><div class="label">Collecte terrain</div><h1>Des données fiables, même sans réseau</h1><p>Les équipes collectent avec des outils open source déjà répandus au Sénégal : QField (projets QGIS), KoboToolbox et ODK Collect (formulaires XLSForm). Les remontées sont synchronisées vers PostGIS dès que le réseau revient.</p></div></div>
-      <div class="grid g-3" style="margin-bottom:16px">
-        ${[['QF', 'QField + QFieldCloud', 'Cartographie terrain sur projet QGIS : position des sections, permanences, zones de porte-à-porte, relevés hors ligne.'], ['KB', 'KoboToolbox', 'Formulaires XLSForm : porte-à-porte, recensement des antennes, placement des cartes, consentement.'], ['ODK', 'ODK Collect + Central', 'Alternative auto-hébergeable ; mêmes formulaires XLSForm, chiffrement des soumissions.']].map(c => `<section class="panel"><div class="body"><div class="conn" style="border:0;padding:0"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div></div></div></section>`).join('')}
-      </div>
-      <div class="grid" style="grid-template-columns:minmax(0,320px) minmax(0,1fr);align-items:start" id="terrGrid">
-        <div class="phone-wrap"><div class="phone"><div class="screen">
-          <div class="p-status"><span>09:41</span><span>${T.queue ? 'Hors ligne' : '4G'} ▮▮▯</span></div>
-          <div class="p-head"><small>Formulaire « Porte-à-porte » (XLSForm)</small><b>Secteur Mbour — Malicounda</b><small>Équipe Jeunesse · 14 bénévoles</small></div>
-          ${T.queue ? `<div class="p-off"><span>Hors ligne · ${T.queue} fiches en attente</span><button id="pSync">Synchroniser</button></div>` : `<div class="p-off" style="background:${css('--teal-soft')};color:${css('--teal')}"><span>Synchronisé à l’instant</span></div>`}
-          <div class="p-tabs"><button data-ptab="pap" aria-pressed="${T.tab === 'pap'}">Porte-à-porte</button><button data-ptab="tel" aria-pressed="${T.tab === 'tel'}">Phoning</button></div>
-          <div class="p-body">
-            ${T.tab === 'pap' ? `<div class="door"><span class="small muted">Porte ${T.door + 1} / ${DOORS.length} du parcours</span><span class="addr">${esc(DOORS[T.door % DOORS.length].a)}</span><span class="small muted">${esc(DOORS[T.door % DOORS.length].h)}</span></div>
-            <div class="outcomes"><button data-out="fav">Favorable</button><button data-out="ind">Indécis</button><button data-out="opp">Pas intéressé</button><button data-out="abs">Absent</button></div>
-            <label class="small row" style="gap:6px"><input type="checkbox" id="pCons"> Accepte d’être recontacté (consentement)</label>`
-          : `<div class="door"><span class="small muted">Appel 23 / 60 · liste « Sympathisants Pikine »</span><span class="addr">Awa D. — 77 ••• •• 48</span><span class="small muted">Dernier contact : meeting du 12 sept.</span></div>
-            <div class="script"><b>Script</b><br>« Bonjour, je suis bénévole du parti à Pikine. Nous organisons une réunion de quartier samedi à 17 h. Pouvons-nous compter sur votre présence ? »</div>
-            <div class="outcomes"><button data-out="fav">Viendra</button><button data-out="ind">À rappeler</button><button data-out="opp">Refus</button><button data-out="abs">Pas de réponse</button></div>`}
-            <div class="p-counts"><div><b>${T.counts.fav}</b>${T.tab === 'pap' ? 'Favorables' : 'Oui'}</div><div><b>${T.counts.ind}</b>Indécis</div><div><b>${T.counts.opp}</b>Refus</div><div><b>${T.counts.abs}</b>Absents</div></div>
-          </div></div></div></div>
-        <div class="stack">
-          <section class="panel"><header><h3>Dernières synchronisations</h3><span class="sub">vers PostGIS</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Heure</th><th>Outil</th><th>Formulaire / projet</th><th class="n">Fiches</th><th>Contrôle</th></tr></thead><tbody>${T.log.map(l => `<tr><td class="mono">${l[0]}</td><td>Appli PoliScope</td><td>${esc(l[1])}</td><td class="n">1</td><td><span class="chip s-ok">Validée</span></td></tr>`).join('')}${batches.map(b => `<tr><td class="mono">${b[0]}</td><td>${b[1]}</td><td>${esc(b[2])}</td><td class="n">${b[3]}</td><td><span class="chip ${b[4]}">${b[4] === 's-ok' ? 'Validée' : '3 doublons à vérifier'}</span></td></tr>`).join('')}</tbody></table></div></section>
-          <section class="panel"><header><h3>Formulaires fournis</h3></header><div class="body"><div class="grid g-2">
-            ${[['Porte-à-porte', 'Adresse, résultat de la visite, sujets évoqués, consentement, position GPS.'], ['Recensement des antennes', 'Section, niveau, responsable, membres, photo de la permanence, position GPS.'], ['Placement de cartes', 'Numéro de carte, section, montant, reçu.'], ['Émargement d’événement', 'Événement, participants, consentement.']].map(f => `<div><b>${f[0]}</b><div class="small muted">${f[1]}</div></div>`).join('')}
-          </div><p class="small muted" style="margin:12px 0 0">Les XLSForm et le projet QField type sont dans le dossier <span class="mono">collecte/</span> du dépôt.</p></div></section>
-        </div>
-      </div>`;
+      const tab = S.terrTab || 'appli', R = PS.REMONTEES();
+      const mine = R.filter(r => PS.canEdit(r)), toCheck = mine.filter(isOpen).length;
+      const r30 = (PS.role.edit === 'national' ? R : mine).filter(r => r.jour >= -30);
+      const pap = r30.filter(r => r.type === 'Porte-à-porte' && r.resultat !== 'Absent'), fav = pap.filter(r => r.resultat === 'Favorable').length;
+      const tabs = [['appli', 'Appli terrain'], ['remontees', 'Remontées'], ['valider', `À valider${toCheck ? ` (${toCheck})` : ''}`], ['import', 'Importer un fichier'], ['collecteurs', 'Collecteurs'], ['outils', 'Outils et formulaires']];
+      return `<div class="view-head"><div><div class="label">Collecte terrain</div><h1>Des données de terrain fiables, même sans réseau</h1><p>Les fiches de porte-à-porte et de phoning arrivent de l’appli PoliScope, de QField, de KoboToolbox ou d’ODK. Elles font avancer les actions, apparaissent sur la carte et passent par une validation avant d’alimenter les indicateurs.</p></div>
+        <div class="actions"><button class="btn" id="tr-map">Voir les remontées sur la carte</button></div></div>
+      <section class="kpis kpis-4" aria-label="Collecte">${[['Remontées (30 j)', fmt(r30.length), PS.role.edit === 'national' ? 'tout le Sénégal' : esc(editScopeText())], ['À valider', fmt(toCheck), 'doublons, consentement, périmètre'], ['Accueil favorable', pap.length ? Math.round(fav / pap.length * 100) + ' %' : '—', 'porte-à-porte, hors absents'], ['Collecteurs actifs', fmt(new Set(r30.map(r => r.collecteur)).size), 'au moins une fiche sur 30 j']].map(k => `<div class="kpi"><div class="label">${k[0]}</div><div class="v">${k[1]}</div><div class="d muted">${k[2]}</div></div>`).join('')}</section>
+      <div class="tabs" role="tablist" style="margin-top:16px">${tabs.map(([k, l]) => `<button role="tab" data-ttab="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+      <div id="terrBody">${({ appli: tAppli, remontees: tRem, valider: tVal, import: tImp, collecteurs: tCol, outils: tOut })[tab]()}</div>`;
     },
     bind() {
-      if (window.innerWidth < 900) $('#terrGrid').style.gridTemplateColumns = 'minmax(0,1fr)';
-      const T = S.terrain;
-      $$('[data-ptab]').forEach(b => b.addEventListener('click', () => { T.tab = b.dataset.ptab; render() }));
-      $$('[data-out]').forEach(b => b.addEventListener('click', () => {
-        const k = b.dataset.out; T.counts[k]++;
-        const lbl = { fav: 'favorable', ind: 'indécis', opp: 'pas intéressé', abs: 'absent' }[k];
-        T.pending.push(T.tab === 'pap' ? `Porte-à-porte : ${DOORS[T.door % DOORS.length].a} — ${lbl}${$('#pCons') && $('#pCons').checked ? ', consentement recueilli' : ''}` : `Phoning Pikine — ${b.textContent.toLowerCase()}`);
-        T.queue++; if (T.tab === 'pap') T.door = (T.door + 1) % DOORS.length; render();
-      }));
-      const s = $('#pSync'); if (s) s.addEventListener('click', () => { const n = T.queue; const h = new Date(); const hh = `${String(h.getHours()).padStart(2, '0')}:${String(h.getMinutes()).padStart(2, '0')}`; T.pending.forEach(p => T.log.unshift([hh, p])); T.pending = []; T.queue = 0; render(); PS.toast(`${n} fiches synchronisées avec le QG.`) });
+      $$('[data-ttab]').forEach(b => b.addEventListener('click', () => { S.terrTab = b.dataset.ttab; render() }));
+      $('#tr-map').addEventListener('click', () => { S.map.layers.remontees = true; go('carte') });
+      ({ appli: bAppli, remontees: bRem, valider: bVal, import: bImp, collecteurs: () => { }, outils: () => { } })[S.terrTab || 'appli']();
     }
   };
+  function tAppli() {
+    const T = S.terrain, acts = terrActions();
+    if (!T.action || !acts.some(a => a.id === T.action)) T.action = (acts.find(a => a.type === (T.tab === 'tel' ? 'Phoning' : 'Porte-à-porte')) || acts[0] || {}).id;
+    const a = acts.find(x => x.id === T.action);
+    const pend = T.pending.length;
+    return `<div class="grid" style="grid-template-columns:minmax(0,320px) minmax(0,1fr);align-items:start" id="terrGrid">
+      <div class="stack">
+        <div class="field"><label for="tr-act">Action concernée</label><select id="tr-act" class="terr-sel">${acts.map(x => `<option value="${x.id}" ${x.id === T.action ? 'selected' : ''}>${esc(x.t)}</option>`).join('') || '<option>Aucune action en cours dans votre périmètre</option>'}</select></div>
+        <div class="phone-wrap"><div class="phone"><div class="screen">
+          <div class="p-status"><span>09:41</span><span>${pend ? 'Hors ligne' : '4G'} ▮▮▯</span></div>
+          <div class="p-head"><small>${a ? esc(a.type) : 'Collecte'}</small><b>${a ? esc(a.t.split('—').pop().trim()) : 'Aucune action'}</b><small>${a ? `${esc(a.team)} · ${fmt(a.done)} / ${fmt(a.obj)}` : 'Créez une action dans « Actions terrain »'}</small></div>
+          ${pend ? `<div class="p-off"><span>Hors ligne · ${pend} fiche${pend > 1 ? 's' : ''} en attente</span><button id="pSync">Synchroniser</button></div>` : `<div class="p-off" style="background:${css('--teal-soft')};color:${css('--teal')}"><span>Tout est synchronisé</span></div>`}
+          <div class="p-body">
+            ${!a ? '<p class="small muted">Aucune action de porte-à-porte ou de phoning en cours dans votre périmètre.</p>' : a.type === 'Porte-à-porte' ? `<div class="door"><span class="small muted">Porte ${T.door + 1} / ${DOORS.length} du parcours</span><span class="addr">${esc(DOORS[T.door % DOORS.length].a)}</span><span class="small muted">${esc(DOORS[T.door % DOORS.length].h)}</span></div>
+            <div class="outcomes"><button data-out="Favorable">Favorable</button><button data-out="Indécis">Indécis</button><button data-out="Pas intéressé">Pas intéressé</button><button data-out="Absent">Absent</button></div>
+            <label class="small row" style="gap:6px"><input type="checkbox" id="pCons"> Accepte d’être recontacté (consentement)</label>`
+          : `<div class="door"><span class="small muted">Appel ${T.counts.fav + T.counts.ind + T.counts.opp + T.counts.abs + 1} · liste de la section</span><span class="addr">Awa D. — 77 ••• •• 48</span><span class="small muted">Dernier contact : meeting du 12 sept.</span></div>
+            <div class="script"><b>Script</b><br>« Bonjour, je suis bénévole du parti. Nous organisons une réunion de quartier samedi à 17 h. Pouvons-nous compter sur votre présence ? »</div>
+            <div class="outcomes"><button data-out="Viendra">Viendra</button><button data-out="À rappeler">À rappeler</button><button data-out="Refus">Refus</button><button data-out="Pas de réponse">Pas de réponse</button></div>`}
+            <div class="p-counts"><div><b>${T.counts.fav}</b>Favorables</div><div><b>${T.counts.ind}</b>Indécis</div><div><b>${T.counts.opp}</b>Refus</div><div><b>${T.counts.abs}</b>Absents</div></div>
+          </div></div></div></div>
+      </div>
+      <div class="stack">
+        <section class="panel"><header><h3>Comment ça marche</h3></header><div class="body small" style="display:grid;gap:8px">
+          <div><b>1. Saisie hors ligne.</b> <span class="muted">Le bénévole note chaque porte ou chaque appel. La position GPS est enregistrée avec la fiche.</span></div>
+          <div><b>2. Synchronisation.</b> <span class="muted">Au retour du réseau, les fiches partent vers le serveur. Ici, le bouton « Synchroniser » du téléphone simule ce moment.</span></div>
+          <div><b>3. Contrôles.</b> <span class="muted">Doublons, consentement, périmètre : les fiches douteuses vont dans « À valider ».</span></div>
+          <div><b>4. Effets.</b> <span class="muted">Le réalisé de l’action avance, la fiche apparaît sur la carte (couche « Remontées terrain ») et pré-remplit le bilan à la clôture.</span></div>
+        </div></section>
+        <section class="panel"><header><h3>Dernières fiches synchronisées</h3><span class="sub">cette session</span></header><div class="tbl-wrap">${T.log.length ? `<table class="tbl"><thead><tr><th>Heure</th><th>Résultat</th><th>Commune</th><th>Action</th></tr></thead><tbody>${T.log.slice(0, 12).map(l => `<tr><td class="mono">${l.h}</td><td><span class="chip ${RCHIP[l.r.resultat]}">${esc(l.r.resultat)}</span></td><td>${esc(l.r.commune)}</td><td class="small">${esc(l.r.actionT)}</td></tr>`).join('')}</tbody></table>` : '<p class="body small muted" style="margin:0">Touchez un résultat sur le téléphone, puis « Synchroniser » : les fiches apparaissent ici, dans l’onglet Remontées et sur la carte.</p>'}</div></section>
+      </div></div>`;
+  }
+  function bAppli() {
+    if (window.innerWidth < 900) $('#terrGrid').style.gridTemplateColumns = 'minmax(0,1fr)';
+    const T = S.terrain;
+    const sel = $('#tr-act'); if (sel) sel.addEventListener('change', () => { T.action = sel.value; T.door = 0; render() });
+    $$('[data-out]').forEach(b => b.addEventListener('click', () => {
+      const a = PS.ACTIONS().find(x => x.id === T.action); if (!a) return;
+      const k = b.dataset.out, map = { 'Favorable': 'fav', 'Viendra': 'fav', 'Indécis': 'ind', 'À rappeler': 'ind', 'Pas intéressé': 'opp', 'Refus': 'opp', 'Absent': 'abs', 'Pas de réponse': 'abs' };
+      T.counts[map[k]]++;
+      const pt = randomPointIn(a) || { lat: 14.7, lng: -17.4, commune: a.dep };
+      T.pending.push({ id: 'rx' + Date.now() + Math.random().toString(36).slice(2, 6), action: a.id, actionT: a.t, type: a.type, dep: a.dep, r: a.r, commune: pt.commune, lat: pt.lat, lng: pt.lng, resultat: k, outil: 'Appli PoliScope', collecteur: PS.user.nom, jour: 0, statut: 'Validée', consent: !!($('#pCons') && $('#pCons').checked) });
+      if (a.type === 'Porte-à-porte') T.door = (T.door + 1) % DOORS.length;
+      render();
+    }));
+    const s = $('#pSync'); if (s) s.addEventListener('click', () => {
+      const n = T.pending.length, h = new Date(), hh = `${String(h.getHours()).padStart(2, '0')}:${String(h.getMinutes()).padStart(2, '0')}`;
+      T.pending.forEach(r => { extra.remontees.unshift(r); T.log.unshift({ h: hh, r }); const a = PS.ACTIONS().find(x => x.id === r.action); if (a) a.done += 1 });
+      [...new Set(T.pending.map(r => r.action))].forEach(id => { const a = PS.ACTIONS().find(x => x.id === id); if (a) PS.saveActState(a) });
+      T.pending = []; PS.log(`a synchronisé ${n} fiche${n > 1 ? 's' : ''} terrain`); PS.persist(); render(); PS.toast(`${n} fiche${n > 1 ? 's' : ''} synchronisée${n > 1 ? 's' : ''} : l’action avance et les points sont sur la carte.`);
+    });
+  }
+  function remRows() {
+    const F = S.rmFilter = S.rmFilter || { action: '', statut: '', q: '' }, q = F.q.toLowerCase();
+    return PS.REMONTEES().filter(r => (!F.action || r.action === F.action) && (!F.statut || r.statut === F.statut) && (!q || (r.commune + ' ' + r.collecteur + ' ' + r.dep + ' ' + r.outil).toLowerCase().includes(q))).sort((a, b) => b.jour - a.jour);
+  }
+  function tRem() {
+    const F = S.rmFilter = S.rmFilter || { action: '', statut: '', q: '' };
+    const acts = [...new Map(PS.REMONTEES().map(r => [r.action, r.actionT])).entries()];
+    return `<section class="panel"><header><div class="filters"><input type="search" id="rf-q" placeholder="Commune, collecteur, outil…" value="${esc(F.q)}" aria-label="Rechercher">
+      <select id="rf-a" class="terr-sel" aria-label="Action"><option value="">Toutes les actions</option>${acts.map(([id, t]) => `<option value="${id}" ${F.action === id ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
+      <select id="rf-s" class="terr-sel" aria-label="Contrôle"><option value="">Tous les contrôles</option>${Object.keys(STCHIP).map(k => `<option ${F.statut === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div><span class="right sub" id="rf-n"></span></header><div class="tbl-wrap" id="rf-t" style="max-height:62vh;overflow:auto"></div></section>`;
+  }
+  function bRem() {
+    const draw = () => { const rows = remRows(); $('#rf-n').textContent = `${rows.length} fiche${rows.length > 1 ? 's' : ''}`;
+      $('#rf-t').innerHTML = rows.length ? `<table class="tbl"><thead><tr><th>Date</th><th>Résultat</th><th>Commune</th><th>Action</th><th>Collecteur</th><th>Outil</th><th>Contrôle</th></tr></thead><tbody>${rows.slice(0, 400).map(r => `<tr><td class="mono small">${dayFmt(r.jour)}</td><td><span class="chip ${RCHIP[r.resultat] || 's-neutral'}">${esc(r.resultat)}</span></td><td>${esc(r.commune)}<div class="small muted">${esc(r.dep)}</div></td><td class="small">${esc(r.actionT)}</td><td class="small">${esc(r.collecteur)}</td><td class="small">${esc(r.outil)}</td><td><span class="chip ${STCHIP[r.statut]}">${esc(r.statut)}</span></td></tr>`).join('')}</tbody></table>` : '<p class="body muted">Aucune fiche pour ces critères.</p>' };
+    $('#rf-q').addEventListener('input', e => { S.rmFilter.q = e.target.value; draw() });
+    $('#rf-a').addEventListener('change', e => { S.rmFilter.action = e.target.value; draw() });
+    $('#rf-s').addEventListener('change', e => { S.rmFilter.statut = e.target.value; draw() });
+    draw();
+  }
+  function tVal() {
+    const rows = PS.REMONTEES().filter(r => isOpen(r) && PS.canEdit(r));
+    return `<section class="panel"><header><h3>Fiches à vérifier</h3><span class="sub">${esc(editScopeText())}</span>${rows.length ? '<span class="right"><button class="btn sm" id="vl-all">Valider les doublons vérifiés</button></span>' : ''}</header>
+      ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Contrôle</th><th>Fiche</th><th>Collecteur</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td><span class="chip ${STCHIP[r.statut]}">${esc(r.statut)}</span><div class="small muted" style="max-width:36ch;margin-top:4px">${esc(STHELP[r.statut] || '')}</div></td><td><b>${esc(r.resultat)}</b> · ${esc(r.commune)} (${esc(r.dep)})<div class="small muted">${dayFmt(r.jour)} · ${esc(r.actionT)} · ${esc(r.outil)}</div></td><td class="small">${esc(r.collecteur)}</td><td><div class="row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-vok="${r.id}">Valider</button><button class="btn sm" data-vko="${r.id}">Rejeter</button></div></td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="body muted" style="margin:0">Aucune fiche en attente dans votre périmètre : toutes les remontées ont passé les contrôles.</p>'}</section>
+      ${PS.role.edit === 'aucun' ? PS.lockHTML('Validation') : ''}`;
+  }
+  function bVal() {
+    const find = id => PS.REMONTEES().find(r => r.id === id);
+    $$('[data-vok]').forEach(b => b.addEventListener('click', () => { const r = find(b.dataset.vok); setRemStatut(r, 'Validée'); PS.log(`a validé une fiche terrain (${r.commune})`); render() }));
+    $$('[data-vko]').forEach(b => b.addEventListener('click', () => { const r = find(b.dataset.vko); setRemStatut(r, 'Rejetée'); PS.log(`a rejeté une fiche terrain (${r.commune})`); render() }));
+    const all = $('#vl-all'); if (all) all.addEventListener('click', () => { const rs = PS.REMONTEES().filter(r => r.statut === 'Doublon possible' && PS.canEdit(r)); rs.forEach(r => setRemStatut(r, 'Validée')); PS.log(`a validé ${rs.length} doublons vérifiés`); render(); PS.toast(`${rs.length} fiche${rs.length > 1 ? 's' : ''} validée${rs.length > 1 ? 's' : ''}.`) });
+  }
+  /* ----- Import d'un export KoboToolbox / QField / ODK (CSV ou GeoJSON) ----- */
+  const COLS_MAP = { lat: ['latitude', 'lat', '_position_latitude', '_geolocation_latitude', 'y', 'gps_latitude'], lng: ['longitude', 'lon', 'lng', '_position_longitude', '_geolocation_longitude', 'x', 'gps_longitude'], res: ['resultat', 'résultat', 'result', 'visite/resultat', 'outcome'], date: ['date', 'collecte_le', '_submission_time', 'start', 'end', 'today'], agent: ['agent', 'collecteur', 'username', '_submitted_by', 'enqueteur'], pos: ['position', '_geolocation', 'lieu/position', 'gps'] };
+  const RES_NORM = { favorable: 'Favorable', indecis: 'Indécis', 'indécis': 'Indécis', pas_interesse: 'Pas intéressé', 'pas intéressé': 'Pas intéressé', 'pas interesse': 'Pas intéressé', absent: 'Absent', refus: 'Pas intéressé' };
+  function parseCSV(txt) {
+    txt = txt.replace(/^﻿/, ''); const first = txt.split(/\r?\n/)[0]; const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
+    const rows = []; let cur = [], f = '', q = false;
+    for (let i = 0; i < txt.length; i++) { const ch = txt[i]; if (q) { if (ch === '"') { if (txt[i + 1] === '"') { f += '"'; i++ } else q = false } else f += ch } else if (ch === '"') q = true; else if (ch === sep) { cur.push(f); f = '' } else if (ch === '\n' || ch === '\r') { if (ch === '\r' && txt[i + 1] === '\n') i++; cur.push(f); rows.push(cur); cur = []; f = '' } else f += ch }
+    if (f || cur.length) { cur.push(f); rows.push(cur) }
+    const head = rows.shift().map(h => h.trim().toLowerCase());
+    return rows.filter(r => r.some(x => x.trim())).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] || '').trim()])));
+  }
+  const pickCol = (o, keys) => { for (const k of keys) if (o[k] != null && o[k] !== '') return o[k]; return null };
+  function toRecords(objs) {
+    return objs.map(o => {
+      let lat = parseFloat(String(pickCol(o, COLS_MAP.lat) ?? '').replace(',', '.')), lng = parseFloat(String(pickCol(o, COLS_MAP.lng) ?? '').replace(',', '.'));
+      const pos = pickCol(o, COLS_MAP.pos); if ((isNaN(lat) || isNaN(lng)) && pos) { const p = String(pos).trim().split(/[\s,]+/).map(Number); if (p.length >= 2) { lat = p[0]; lng = p[1] } }
+      const rr = String(pickCol(o, COLS_MAP.res) || '').trim(); const res = RES_NORM[rr.toLowerCase()] || (rr ? rr.charAt(0).toUpperCase() + rr.slice(1) : 'Non renseigné');
+      return { lat, lng, resultat: res, date: pickCol(o, COLS_MAP.date), agent: pickCol(o, COLS_MAP.agent) || 'Collecteur importé', consent: /^(oui|yes|true|1)$/i.test(String(o.consentement || o.consent || '')) };
+    });
+  }
+  function tImp() {
+    const I = S.imp;
+    return `<div class="grid g-main" style="align-items:start">
+      <section class="panel"><header><h3>Importer des fiches</h3></header><div class="body" style="display:grid;gap:12px">
+        <p style="margin:0">Déposez un export de <b>KoboToolbox</b> ou d’<b>ODK Central</b> (CSV) ou une couche <b>QField</b> exportée en GeoJSON. PoliScope repère les colonnes de position, de résultat, de date et de collecteur, puis applique les contrôles.</p>
+        <div class="grid g-2"><div class="field"><label for="im-src">Outil d’origine</label><select id="im-src"><option>KoboToolbox</option><option>QField</option><option>ODK Collect</option></select></div>
+        <div class="field"><label for="im-act">Rattacher à l’action</label><select id="im-act"><option value="">Aucune (fiches libres)</option>${terrActions().map(a => `<option value="${a.id}">${esc(a.t)}</option>`).join('')}</select></div></div>
+        <label class="drop" for="im-file"><b>Choisir un fichier</b><span class="small muted">CSV (séparateur ; ou ,) ou GeoJSON · colonnes reconnues : latitude / longitude ou position, resultat, date, agent</span></label><input type="file" id="im-file" accept=".csv,.geojson,.json,text/csv,application/geo+json,application/json" hidden>
+        <div id="im-prev">${I ? impPreview(I) : ''}</div>
+      </div></section>
+      <section class="panel"><header><h3>Pour essayer</h3></header><div class="body small" style="display:grid;gap:10px">
+        <p style="margin:0">Téléchargez un fichier d’exemple au format d’export KoboToolbox (formulaire « Porte-à-porte » du dépôt), puis importez-le ici.</p>
+        <button class="btn sm" id="im-sample" style="justify-self:start">Télécharger l’exemple (CSV)</button>
+        <div class="muted">Contrôles appliqués : position dans le Sénégal, rattachement à la commune, doublon (même position au mètre près et même jour), consentement si un numéro est saisi, périmètre de votre profil.</div>
+      </div></section></div>`;
+  }
+  function impPreview(I) {
+    const c = k => I.recs.filter(r => r.ctrl === k).length;
+    return `<div class="notice"><b>${esc(I.name)}</b> · ${I.recs.length} fiche${I.recs.length > 1 ? 's' : ''} lue${I.recs.length > 1 ? 's' : ''} : ${c('Validée')} valides, ${c('Doublon possible')} doublons possibles, ${c('Hors périmètre')} hors périmètre, ${c('Hors Sénégal')} sans position exploitable.</div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Résultat</th><th>Commune</th><th>Collecteur</th><th>Contrôle</th></tr></thead><tbody>${I.recs.slice(0, 8).map(r => `<tr><td>${esc(r.resultat)}</td><td>${esc(r.commune || '—')}</td><td class="small">${esc(r.agent)}</td><td><span class="chip ${STCHIP[r.ctrl] || 's-bad'}">${esc(r.ctrl)}</span></td></tr>`).join('')}</tbody></table></div>
+      ${I.recs.length > 8 ? `<p class="small muted" style="margin:0">… et ${I.recs.length - 8} autres.</p>` : ''}
+      <div class="row"><button class="btn" id="im-cancel">Annuler</button><button class="btn primary" id="im-go" ${I.recs.some(r => r.ctrl !== 'Hors Sénégal') ? '' : 'disabled'}>Importer ${I.recs.filter(r => r.ctrl !== 'Hors Sénégal').length} fiches</button></div>`;
+  }
+  function bImp() {
+    const fi = $('#im-file');
+    fi.addEventListener('change', () => {
+      const f = fi.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        let objs;
+        try {
+          const txt = String(rd.result);
+          if (/\.(geo)?json$/i.test(f.name) || txt.trim().startsWith('{')) { const g = JSON.parse(txt); objs = (g.features || []).filter(x => x.geometry && x.geometry.type === 'Point').map(x => ({ ...Object.fromEntries(Object.entries(x.properties || {}).map(([k, v]) => [k.toLowerCase(), v])), longitude: x.geometry.coordinates[0], latitude: x.geometry.coordinates[1] })) }
+          else objs = parseCSV(txt);
+        } catch (e) { PS.toast('Fichier illisible : vérifiez qu’il s’agit d’un CSV ou d’un GeoJSON valide.'); return }
+        if (!objs.length) { PS.toast('Aucune fiche trouvée dans ce fichier.'); return }
+        const recs = toRecords(objs), seen = new Set(PS.REMONTEES().map(r => `${r.lat.toFixed(4)},${r.lng.toFixed(4)},${r.jour}`));
+        for (const r of recs) {
+          if (isNaN(r.lat) || isNaN(r.lng)) { r.ctrl = 'Hors Sénégal'; continue }
+          const c = PS.D.communes.find(x => PS.D.inGeom([r.lng, r.lat], x.geom));
+          if (!c) { r.ctrl = 'Hors Sénégal'; continue }
+          Object.assign(r, { commune: c.n, dep: c.dep, r: c.r });
+          const d = r.date ? Math.round((new Date(String(r.date).slice(0, 10)) - TODAY) / 864e5) : 0; r.jour = isNaN(d) ? 0 : Math.min(0, d);
+          const key = `${r.lat.toFixed(4)},${r.lng.toFixed(4)},${r.jour}`;
+          r.ctrl = !PS.canEdit(c) ? 'Hors périmètre' : seen.has(key) ? 'Doublon possible' : 'Validée'; seen.add(key);
+        }
+        S.imp = { name: f.name, recs }; $('#im-prev').innerHTML = impPreview(S.imp); bindPrev();
+      };
+      rd.readAsText(f);
+    });
+    const bindPrev = () => {
+      const c = $('#im-cancel'); if (c) c.addEventListener('click', () => { S.imp = null; $('#im-prev').innerHTML = ''; fi.value = '' });
+      const g = $('#im-go'); if (g) g.addEventListener('click', () => {
+        const src = $('#im-src').value, aId = $('#im-act').value, a = PS.ACTIONS().find(x => x.id === aId);
+        const ok = S.imp.recs.filter(r => r.ctrl !== 'Hors Sénégal');
+        ok.forEach((r, i) => extra.remontees.unshift({ id: 'rx' + Date.now() + '_' + i, action: a ? a.id : null, actionT: a ? a.t : 'Fiche importée (' + src + ')', type: 'Porte-à-porte', dep: r.dep, r: r.r, commune: r.commune, lat: +r.lat.toFixed(5), lng: +r.lng.toFixed(5), resultat: r.resultat, outil: src, collecteur: r.agent, jour: r.jour, statut: r.ctrl, consent: r.consent }));
+        if (a) { a.done += ok.filter(r => r.ctrl === 'Validée').length; PS.saveActState(a) }
+        PS.log(`a importé ${ok.length} fiches ${src} (${S.imp.name})`); PS.persist(); S.imp = null; S.terrTab = 'remontees'; S.rmFilter = { action: a ? a.id : '', statut: '', q: '' }; render(); PS.toast(`${ok.length} fiches importées depuis ${src}.`);
+      });
+    };
+    bindPrev();
+    $('#im-sample').addEventListener('click', () => {
+      const p = PS.user.perimetre, d = p.type === 'departement' ? PS.D.depts.find(x => x.n === p.nom) : p.type === 'region' ? PS.D.regions.find(x => x.n === p.nom).children[0] : PS.D.depts.find(x => x.n === 'Mbour');
+      const res = ['favorable', 'favorable', 'indecis', 'pas_interesse', 'absent'], ag = ['awa.sarr', 'ibrahima.diop', 'fatou.ba'];
+      const lines = [['start', 'agent', 'region', 'commune', 'adresse', '_position_latitude', '_position_longitude', 'resultat', 'personnes', 'relance', 'consentement']];
+      for (let i = 0; i < 24; i++) { const pt = randomPointIn({ dep: d.n }); lines.push([`2026-10-${String(14 + (i % 6)).padStart(2, '0')}T${10 + (i % 7)}:${String(i * 7 % 60).padStart(2, '0')}:00`, ag[i % 3], d.r, pt.commune, `Quartier ${1 + (i % 5)}, maison ${i + 3}`, pt.lat, pt.lng, res[i % 5], 1 + (i % 6), i % 4 ? 'non' : 'oui', i % 3 ? 'oui' : 'non']) }
+      lines.push(lines[3].slice()); // un doublon volontaire
+      try { const l = document.createElement('a'); l.href = URL.createObjectURL(new Blob(['﻿' + lines.map(r => r.join(';')).join('\n')], { type: 'text/csv;charset=utf-8' })); l.download = `export_kobo_porte_a_porte_${d.n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')}.csv`; document.body.appendChild(l); l.click(); l.remove(); PS.toast('Fichier d’exemple téléchargé : importez-le avec « Choisir un fichier ».') } catch (e) { PS.toast('Téléchargement bloqué par le navigateur.') }
+    });
+  }
+  function tCol() {
+    const R = PS.REMONTEES().filter(r => PS.role.edit === 'national' || PS.canEdit(r)), by = {};
+    for (const r of R) { const k = r.collecteur; (by[k] = by[k] || { n: 0, fav: 0, base: 0, last: -999, deps: new Set(), outils: new Set(), chk: 0 }); const b = by[k]; b.n++; if (r.resultat !== 'Absent' && r.resultat !== 'Pas de réponse') { b.base++; if (r.resultat === 'Favorable' || r.resultat === 'Viendra') b.fav++ } b.last = Math.max(b.last, r.jour); b.deps.add(r.dep); b.outils.add(r.outil); if (isOpen(r)) b.chk++ }
+    const rows = Object.entries(by).sort((a, b) => b[1].n - a[1].n);
+    return `<section class="panel"><header><h3>Activité des collecteurs</h3><span class="sub">${PS.role.edit === 'national' ? 'tout le Sénégal' : esc(editScopeText())}</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Collecteur</th><th>Territoire</th><th>Outils</th><th class="n">Fiches</th><th>Accueil favorable</th><th class="n">À vérifier</th><th>Dernière fiche</th></tr></thead><tbody>${rows.map(([k, b]) => { const p = b.base ? Math.round(b.fav / b.base * 100) : 0; return `<tr><td><b>${esc(k)}</b></td><td class="small">${esc([...b.deps].join(', '))}</td><td class="small">${esc([...b.outils].join(', '))}</td><td class="n">${b.n}</td><td><div class="bar-cell"><div class="track"><div class="fill" style="width:${p}%"></div></div><span class="num small">${p} %</span></div></td><td class="n">${b.chk || '—'}</td><td class="small">${ago(-b.last)}</td></tr>` }).join('') || '<tr><td colspan="7" class="muted">Aucun collecteur dans votre périmètre.</td></tr>'}</tbody></table></div>
+      <div class="body small muted">Un taux de fiches « à vérifier » élevé chez un collecteur signale un besoin de formation à l’outil.</div></section>`;
+  }
+  function tOut() {
+    return `<div class="grid g-3" style="margin-bottom:16px">
+        ${[['QF', 'QField + QFieldCloud', 'Cartographie terrain sur projet QGIS : position des sections, permanences, zones de porte-à-porte, relevés hors ligne.'], ['KB', 'KoboToolbox', 'Formulaires XLSForm : porte-à-porte, recensement des antennes, placement des cartes, consentement.'], ['ODK', 'ODK Collect + Central', 'Alternative auto-hébergeable ; mêmes formulaires XLSForm, chiffrement des soumissions.']].map(c => `<section class="panel"><div class="body"><div class="conn" style="border:0;padding:0"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div></div></div></section>`).join('')}
+      </div>
+      <section class="panel"><header><h3>Formulaires fournis</h3></header><div class="body"><div class="grid g-2">
+        ${[['Porte-à-porte', 'Adresse, résultat de la visite, sujets évoqués, consentement, position GPS.'], ['Recensement des antennes', 'Section, niveau, responsable, membres, photo de la permanence, position GPS.'], ['Placement de cartes', 'Numéro de carte, section, montant, reçu.'], ['Émargement d’événement', 'Événement, participants, consentement.']].map(f => `<div><b>${f[0]}</b><div class="small muted">${f[1]}</div></div>`).join('')}
+      </div><p class="small muted" style="margin:12px 0 0">Les XLSForm et le projet QField type sont dans le dossier <span class="mono">collecte/</span> du dépôt. En production, les soumissions arrivent automatiquement (webhook Kobo/ODK, synchronisation QFieldCloud) ; l’import de fichier reste disponible en secours.</p></div></section>`;
+  }
 
   /* =========================================================
      MESSAGES
      ========================================================= */
+  const CH_IC = {
+    'SMS': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg>',
+    'WhatsApp': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.1A8 8 0 1 1 20 11.5z"/><path d="M9 9.5c.3 2 2 3.8 4.2 4.4l1.1-1.1 1.7.8"/></svg>',
+    'Message vocal': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'
+  };
+  PS.CH_IC = CH_IC;
+  const fmtDur = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   VIEWS.messages = {
     html() {
       const C = PS.CAMPAIGNS().filter(c => PS.role.edit === 'national' || !c.r || PS.canEdit({ r: c.r, dep: c.dep }));
-      const regs = PS.D.regions.filter(r => PS.canEdit(r) || PS.canEdit({ r: r.n, dep: PS.user.perimetre.nom }));
-      return `<div class="view-head"><div><div class="label">Mobilisation</div><h1>Messages et campagnes</h1><p>SMS, WhatsApp et messages vocaux vers des segments de contacts de votre périmètre (${esc(editScopeText())}). Seuls les contacts ayant donné leur accord sont comptés et contactés.</p></div></div>
+      const ch = S.msgCh || 'SMS', V = S.voice || {};
+      return `<div class="view-head"><div><div class="label">Mobilisation</div><h1>Messages et campagnes</h1><p>Informer en masse une cible de votre périmètre (${esc(editScopeText())}) par SMS, WhatsApp ou message vocal. Seuls les contacts ayant donné leur accord sont comptés et contactés.</p></div></div>
       <div class="grid g-main" style="align-items:start">
         <section class="panel"><header><h3>Campagnes</h3></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Campagne</th><th>Canal</th><th>Cible</th><th class="n">Envoyés</th><th class="n">Délivrés</th><th class="n">Réponses</th><th>Statut</th></tr></thead><tbody>
-          ${C.map(c => `<tr><td><b>${esc(c.nom)}</b><div class="small muted">${c.st === 'Programmée' ? 'prévue le ' : 'le '}${dayFmt(c.date)}</div></td><td>${esc(c.canal)}</td><td class="small">${esc(c.cible)}</td><td class="n">${c.env ? fmt(c.env) : '—'}</td><td class="n">${c.env ? Math.round(c.deliv / c.env * 100) + ' %' : '—'}</td><td class="n">${c.env ? Math.round(c.rep / c.env * 100) + ' %' : '—'}</td><td><span class="chip ${c.st === 'Envoyée' ? 's-ok' : 's-warn'}">${c.st}</span></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune campagne dans votre périmètre.</td></tr>'}</tbody></table></div></section>
+          ${C.map(c => `<tr><td><b>${esc(c.nom)}</b><div class="small muted">${c.st === 'Programmée' ? 'prévue le ' : 'le '}${dayFmt(c.date)}</div></td><td><span class="ch-cell">${CH_IC[c.canal] || ''}${esc(c.canal)}</span>${c.mode ? `<div class="small muted">${esc(c.mode)}${c.duree ? ' · ' + fmtDur(c.duree) : ''}</div>` : ''}</td><td class="small">${esc(c.cible)}</td><td class="n">${c.env ? fmt(c.env) : '—'}</td><td class="n">${c.env ? Math.round(c.deliv / c.env * 100) + ' %' : '—'}</td><td class="n">${c.env ? Math.round(c.rep / c.env * 100) + ' %' : '—'}</td><td><span class="chip ${c.st === 'Envoyée' ? 's-ok' : 's-warn'}">${c.st}</span></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune campagne dans votre périmètre.</td></tr>'}</tbody></table></div></section>
         <section class="panel"><header><h3>Nouvelle campagne</h3></header><div class="body" style="display:grid;gap:12px">
-          <div class="field"><label for="mg-n">Nom</label><input id="mg-n" placeholder="Ex. Invitation réunion de quartier"></div>
-          <div class="grid g-2"><div class="field"><label for="mg-c">Canal</label><select id="mg-c"><option>SMS</option><option>WhatsApp</option><option>Message vocal</option></select></div>
-          <div class="field"><label for="mg-s">Statut</label><select id="mg-s"><option value="">Tous</option><option>Militant</option><option>Sympathisant</option><option>Bénévole</option></select></div>
-          <div class="field" style="grid-column:1/-1"><label for="mg-t">Étiquette</label><select id="mg-t"><option value="">Toutes</option>${PS.D.TAGS.map(t => `<option>${t}</option>`).join('')}</select></div></div>
-          <div class="field"><label for="mg-m">Message</label><textarea id="mg-m">Bonjour {prénom}, la section {section} vous invite à une réunion samedi à 17 h. Répondez OUI pour confirmer.</textarea><span class="small muted" id="mg-cnt"></span></div>
+          <div class="field"><label for="mg-n">Nom</label><input id="mg-n" placeholder="Ex. Invitation réunion de quartier" value="${esc(S.msgName || '')}"></div>
+          <div class="field"><span class="flabel">Canal</span><div class="seg chan" id="mg-c" role="radiogroup" aria-label="Canal">${Object.keys(CH_IC).map(k => `<button type="button" role="radio" data-ch="${k}" aria-pressed="${ch === k}" aria-checked="${ch === k}">${CH_IC[k]}<span>${k === 'Message vocal' ? 'Vocal' : k}</span></button>`).join('')}</div></div>
+          <div class="grid g-2"><div class="field"><label for="mg-s">Statut</label><select id="mg-s"><option value="">Tous</option><option>Militant</option><option>Sympathisant</option><option>Bénévole</option></select></div>
+          <div class="field"><label for="mg-t">Étiquette</label><select id="mg-t"><option value="">Toutes</option>${PS.D.TAGS.map(t => `<option>${t}</option>`).join('')}</select></div></div>
+          ${ch === 'Message vocal' ? `
+          <div class="voice">
+            <div class="field"><span class="flabel">Mode de diffusion</span>
+              <label class="vopt"><input type="radio" name="vmode" value="Appel vocal automatisé" ${(V.mode || 'Appel vocal automatisé') === 'Appel vocal automatisé' ? 'checked' : ''}><span><b>Appel vocal automatisé</b><span class="small muted">Le serveur vocal appelle chaque contact et diffuse l’enregistrement. Fonctionne sur tous les téléphones, sans internet, pour les publics non lecteurs. Touche 1 pour confirmer sa présence.</span></span></label>
+              <label class="vopt"><input type="radio" name="vmode" value="Note vocale WhatsApp" ${V.mode === 'Note vocale WhatsApp' ? 'checked' : ''}><span><b>Note vocale WhatsApp</b><span class="small muted">L’enregistrement est envoyé comme note vocale aux contacts équipés de WhatsApp.</span></span></label>
+            </div>
+            <div class="field"><label for="mg-lang">Langue de l’enregistrement</label><select id="mg-lang">${['Wolof', 'Français', 'Pulaar', 'Sérère', 'Diola', 'Mandinka', 'Soninké'].map(l => `<option ${V.lang === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+            <div class="rec" id="mg-rec">
+              ${V.url ? `<audio controls src="${V.url}" style="width:100%"></audio><div class="row small" style="justify-content:space-between"><span class="muted">${esc(V.name || 'Enregistrement')} · ${fmtDur(V.dur || 0)}</span><button type="button" class="btn sm" id="v-clear">Supprimer et refaire</button></div>`
+          : `<button type="button" class="micbtn" id="v-rec" aria-label="Enregistrer avec le micro">${CH_IC['Message vocal'].replace(/width="16" height="16"/, 'width="26" height="26"')}</button>
+              <div><b id="v-state">Enregistrer avec le micro de l’ordinateur</b><div class="small muted" id="v-hint">Cliquez sur le micro, parlez, puis cliquez à nouveau pour arrêter. 30 à 60 secondes conseillées, 90 s au maximum.</div></div>`}
+            </div>
+            ${V.url ? '' : `<label class="btn sm" for="v-file" style="justify-self:start">Importer un fichier audio (MP3, WAV, M4A, OGG)</label><input type="file" id="v-file" accept="audio/*" hidden>`}
+          </div>` : ''}
+          <div class="field"><label for="mg-m">${ch === 'Message vocal' ? 'Script (aide à l’enregistrement, non envoyé)' : 'Message'}</label><textarea id="mg-m">${esc(S.msgText || (ch === 'Message vocal' ? 'Salam aleykoum, ici la section de votre commune. Nous vous invitons à la réunion de quartier samedi à 17 heures, à la permanence. Tapez 1 pour confirmer votre présence.' : 'Bonjour {prénom}, la section {section} vous invite à une réunion samedi à 17 h. Répondez OUI pour confirmer.'))}</textarea><span class="small muted" id="mg-cnt"></span></div>
           <div class="notice" id="mg-est"></div>
           <button class="btn primary" id="mg-ok">Programmer l’envoi</button>
         </div></section>
       </div>`;
     },
     bind() {
+      const ch = () => S.msgCh || 'SMS';
+      const keep = () => { S.msgName = $('#mg-n').value; S.msgText = $('#mg-m').value; const r = $('input[name=vmode]:checked'); if (r) { S.voice = S.voice || {}; S.voice.mode = r.value; S.voice.lang = $('#mg-lang').value } };
       const est = () => {
         const s = $('#mg-s').value, t = $('#mg-t').value;
         const base = PS.CONTACTS().filter(PS.canSeePII), seg = base.filter(c => (!s || c.role === s) && (!t || c.tags.includes(t)));
         const ok = seg.filter(c => c.consent === 'Oui').length;
         const scope = PS.user.perimetre.type === 'national' ? PS.NAT : PS.D.byId[defaultFocus()];
         const scale = Math.max(1, Math.round(scope.membres * 1.8 / Math.max(1, base.length)));
-        $('#mg-est').innerHTML = `Segment : <b>${fmt(ok * scale)}</b> destinataires estimés (consentement « Oui ») · ${fmt((seg.length - ok) * scale)} exclus faute d’accord.`;
-        const m = $('#mg-m').value, ch = $('#mg-c').value;
-        $('#mg-cnt').textContent = ch === 'SMS' ? `${m.length} caractères · ${Math.ceil(m.length / 160) || 1} SMS par destinataire` : (ch === 'Message vocal' ? 'Le texte sert de script d’enregistrement (wolof, pulaar, sérère…).' : `${m.length} caractères`);
+        const n = ok * scale, V = S.voice || {};
+        let extraTxt = '';
+        if (ch() === 'Message vocal') { const d = V.dur || 45; extraTxt = (V.mode || 'Appel vocal automatisé') === 'Appel vocal automatisé' ? ` · environ ${fmt(n * Math.ceil(d / 60))} minutes d’appel, ${Math.max(1, Math.round(n / 30 / 60))} h de diffusion avec 30 lignes simultanées.` : ' · envoi aux contacts équipés de WhatsApp.' }
+        $('#mg-est').innerHTML = `Segment : <b>${fmt(n)}</b> destinataires estimés (consentement « Oui ») · ${fmt((seg.length - ok) * scale)} exclus faute d’accord${extraTxt}`;
+        const m = $('#mg-m').value;
+        $('#mg-cnt').textContent = ch() === 'SMS' ? `${m.length} caractères · ${Math.ceil(m.length / 160) || 1} SMS par destinataire` : (ch() === 'Message vocal' ? `Lecture à voix haute : environ ${Math.max(5, Math.round(m.split(/\s+/).length / 2.3))} secondes.` : `${m.length} caractères`);
       };
-      ['mg-s', 'mg-t', 'mg-c'].forEach(i => $('#' + i).addEventListener('change', est)); $('#mg-m').addEventListener('input', est);
-      $('#mg-ok').addEventListener('click', () => { const n = $('#mg-n').value.trim(); if (!n) { $('#mg-n').focus(); PS.toast('Nommez la campagne avant de la programmer.'); return } const p = PS.user.perimetre; extra.campaigns.unshift({ id: 'mx' + Date.now(), nom: n, canal: $('#mg-c').value, cible: `${$('#mg-s').value || 'Tous statuts'}${$('#mg-t').value ? ' · ' + $('#mg-t').value : ''} — ${perimLabel()}`, r: p.type === 'region' ? p.nom : (p.type === 'departement' ? PS.D.depts.find(d => d.n === p.nom).r : null), dep: p.type === 'departement' ? p.nom : null, env: 0, deliv: 0, rep: 0, st: 'Programmée', date: 1 }); PS.log(`a programmé la campagne « ${n} »`); PS.persist(); render(); PS.toast(`Campagne « ${n} » programmée pour demain.`) });
+      $$('[data-ch]').forEach(b => b.addEventListener('click', () => { keep(); if ((S.msgCh || 'SMS') !== b.dataset.ch) S.msgText = ''; S.msgCh = b.dataset.ch; render() }));
+      ['mg-s', 'mg-t'].forEach(i => $('#' + i).addEventListener('change', est)); $('#mg-m').addEventListener('input', est);
+      $$('input[name=vmode]').forEach(r => r.addEventListener('change', () => { keep(); est() }));
+      // Enregistrement au micro (MediaRecorder) ou import de fichier
+      const setAudio = (blob, dur, name) => { keep(); if (S.voice && S.voice.url) URL.revokeObjectURL(S.voice.url); S.voice = Object.assign(S.voice || {}, { url: URL.createObjectURL(blob), dur, name }); render(); PS.toast('Enregistrement prêt : écoutez-le avant de programmer l’envoi.') };
+      const recBtn = $('#v-rec');
+      if (recBtn) recBtn.addEventListener('click', async () => {
+        if (S._rec) { S._rec.stop(); return }
+        if (!navigator.mediaDevices || !window.MediaRecorder) { PS.toast('Ce navigateur ne permet pas d’enregistrer : importez un fichier audio.'); return }
+        let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }) } catch (e) { PS.toast('Accès au micro refusé. Autorisez le micro dans le navigateur, ou importez un fichier audio.'); return }
+        const rec = new MediaRecorder(stream), chunks = [], t0 = Date.now(); S._rec = rec;
+        rec.ondataavailable = e => chunks.push(e.data);
+        rec.onstop = () => { clearInterval(S._recT); stream.getTracks().forEach(t => t.stop()); S._rec = null; setAudio(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), (Date.now() - t0) / 1000, 'Enregistrement micro') };
+        rec.start(); recBtn.classList.add('on'); $('#v-state').textContent = 'Enregistrement… 0:00'; $('#v-hint').textContent = 'Cliquez à nouveau sur le micro pour arrêter.';
+        S._recT = setInterval(() => { const s = (Date.now() - t0) / 1000; const st = $('#v-state'); if (st) st.textContent = `Enregistrement… ${fmtDur(s)}`; if (s >= 90 && S._rec) S._rec.stop() }, 250);
+      });
+      const vf = $('#v-file'); if (vf) vf.addEventListener('change', () => { const f = vf.files[0]; if (!f) return; if (!/^audio\//.test(f.type)) { PS.toast('Ce fichier n’est pas un fichier audio.'); return } const a = new Audio(URL.createObjectURL(f)); a.addEventListener('loadedmetadata', () => setAudio(f, isFinite(a.duration) ? a.duration : 0, f.name)); a.addEventListener('error', () => setAudio(f, 0, f.name)) });
+      const vc = $('#v-clear'); if (vc) vc.addEventListener('click', () => { keep(); URL.revokeObjectURL(S.voice.url); S.voice.url = null; S.voice.dur = 0; render() });
+      $('#mg-ok').addEventListener('click', () => {
+        const n = $('#mg-n').value.trim(); if (!n) { $('#mg-n').focus(); PS.toast('Nommez la campagne avant de la programmer.'); return }
+        const c = ch(), V = S.voice || {};
+        if (c === 'Message vocal' && !V.url) { PS.toast('Enregistrez le message au micro ou importez un fichier audio.'); return }
+        const p = PS.user.perimetre, mode = c === 'Message vocal' ? ($('input[name=vmode]:checked') || {}).value : null;
+        extra.campaigns.unshift({ id: 'mx' + Date.now(), nom: n, canal: c, mode: mode ? `${mode} · ${$('#mg-lang').value}` : null, duree: c === 'Message vocal' ? Math.round(V.dur || 0) : null, cible: `${$('#mg-s').value || 'Tous statuts'}${$('#mg-t').value ? ' · ' + $('#mg-t').value : ''} — ${perimLabel()}`, r: p.type === 'region' ? p.nom : (p.type === 'departement' ? PS.D.depts.find(d => d.n === p.nom).r : null), dep: p.type === 'departement' ? p.nom : null, env: 0, deliv: 0, rep: 0, st: 'Programmée', date: 1 });
+        PS.log(`a programmé la campagne « ${n} » (${c})`); PS.persist(); S.msgName = ''; S.msgText = ''; if (V.url) { URL.revokeObjectURL(V.url); S.voice = { mode: V.mode, lang: V.lang } } render(); PS.toast(`Campagne « ${n} » programmée pour demain.`);
+      });
       est();
     }
   };
@@ -689,35 +1037,138 @@ window.PS = window.PS || {};
      ========================================================= */
   VIEWS.admin = {
     html() {
-      const mods = [['carte', 'Carte'], ['maillage', 'Maillage'], ['contacts', 'Contacts'], ['actions', 'Actions'], ['messages', 'Messages'], ['rapports', 'Rapports'], ['admin', 'Admin']];
-      const isAdmin = PS.user.role === 'admin_general';
-      const editLbl = { national: 'Tout le Sénégal', region: 'Sa région', departement: 'Son département', aucun: 'Aucune' };
-      const conns = [['CS', 'CivicScope', 'Résultats électoraux par scrutin : régions, départements, communes, bureaux de vote. Score, rang, participation.', 'Connecté', 's-ok'], ['QF', 'QFieldCloud', 'Synchronisation des projets QGIS terrain (sections, permanences, zones).', 'Connecté', 's-ok'], ['KB', 'KoboToolbox', 'Formulaires XLSForm (porte-à-porte, antennes, cartes).', 'Connecté', 's-ok'], ['ODK', 'ODK Central', 'Alternative auto-hébergée pour les formulaires XLSForm.', 'Disponible', 's-neutral'], ['SMS', 'Passerelle SMS (opérateur)', 'Envoi des SMS via l’API de l’opérateur, accusés de réception.', 'À configurer', 's-warn'], ['API', 'API REST PoliScope', 'FastAPI + OpenAPI : interconnexion avec les outils du parti.', 'Disponible', 's-neutral']];
-      return `<div class="view-head"><div><div class="label">Gouvernance</div><h1>Administration et sécurité</h1><p>Comptes, rôles, périmètres de modification, traçabilité et protection des données personnelles.${isAdmin ? '' : ' Consultation seule : la gestion des comptes est réservée à l’administrateur général.'}</p></div></div>
-      <div class="grid g-2" style="align-items:start">
-        <section class="panel"><header><h3>Comptes</h3><span class="right">${isAdmin ? '<button class="btn sm" id="addUser">+ Inviter</button>' : ''}</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th></tr></thead><tbody>${PS.USERS.map(u => `<tr><td><b>${esc(u.nom)}</b><div class="small muted mono">${esc(u.login)}</div></td><td>${esc(PS.ROLES[u.role].label)}</td><td>${esc(perimLabel(u))}</td></tr>`).join('')}</tbody></table></div></section>
-        <section class="panel"><header><h3>Rôles et permissions</h3><span class="sub">● complet · ◐ lecture · ○ aucun</span></header><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Rôle</th>${mods.map(m => `<th class="perm">${m[1]}</th>`).join('')}<th>Modifie</th></tr></thead><tbody>${Object.entries(PS.ROLES).map(([k, r]) => `<tr><td><b>${esc(r.label)}</b></td>${mods.map(([m]) => { const has = r.modules.includes(m); const full = has && r.edit !== 'aucun' && !(m === 'admin' && k !== 'admin_general'); return `<td class="perm">${has ? (full ? '<span class="y" title="Accès complet dans le périmètre">●</span>' : '<span class="p" title="Lecture">◐</span>') : '<span class="n" title="Aucun accès">○</span>'}</td>` }).join('')}<td class="small">${editLbl[r.edit]}</td></tr>`).join('')}</tbody></table></div>
-          <div class="body small muted">Tous les rôles consultent la carte et les indicateurs du Sénégal entier. Les modifications et les données nominatives sont limitées au périmètre du rôle (contrôle appliqué par l’API et par PostgreSQL Row-Level Security).</div></section>
-        <section class="panel"><header><h3>Journal des modifications</h3></header><div class="body feed" style="padding-block:4px;max-height:360px;overflow:auto">${PS.AUDIT().slice(0, 14).map(a => `<div class="it"><span class="t">${a.t}</span><span><b>${esc(a.u)}</b> ${esc(a.a)}</span></div>`).join('')}</div></section>
-        <section class="panel"><header><h3>Connecteurs et sources</h3></header><div class="body" style="padding-block:4px">${conns.map(c => `<div class="conn"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div><span class="chip ${c[4]}">${c[3]}</span></div>`).join('')}</div></section>
+      const can = PS.isAdminGeneral(), tab = S.adminTab || 'comptes';
+      const tabs = [['comptes', 'Comptes'], ['roles', 'Rôles et permissions'], ['journal', 'Journal'], ['connecteurs', 'Connecteurs et sécurité']];
+      return `<div class="view-head"><div><div class="label">Gouvernance</div><h1>Administration</h1><p>Gérer les comptes, les rôles et leurs permissions, suivre le journal des modifications.${can ? '' : ' Consultation seule : la gestion est réservée à l’administrateur général.'}</p></div></div>
+      <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-atab="${k}" aria-selected="${tab === k}">${l}</button>`).join('')}</div>
+      <div id="adminBody">${({ comptes: adminComptes, roles: adminRoles, journal: adminJournal, connecteurs: adminConn })[tab](can)}</div>`;
+    },
+    bind() {
+      $$('[data-atab]').forEach(b => b.addEventListener('click', () => { S.adminTab = b.dataset.atab; render() }));
+      const tab = S.adminTab || 'comptes';
+      if (tab === 'comptes') bindComptes(); if (tab === 'roles') bindRoles();
+    }
+  };
+  const MODLIST = PS.MODULES.flatMap(([, items]) => items);
+  const EDIT_LBL = { national: 'Tout le Sénégal', region: 'Sa région', departement: 'Son département', aucun: 'Aucune (lecture)' };
+  const usersOf = role => PS.USERS.filter(u => u.role === role).length;
+  function adminComptes(can) {
+    const f = S.userFilter || { q: '', role: '' };
+    return `<section class="panel"><header><div class="filters"><input type="search" id="uf-q" placeholder="Nom ou identifiant…" value="${esc(f.q)}" aria-label="Rechercher un compte"><select id="uf-r" aria-label="Rôle"><option value="">Tous les rôles</option>${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${f.role === k ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div>
+      <span class="right">${can ? '<button class="btn sm" id="u-reset" title="Revenir aux comptes et rôles d’origine">Réinitialiser la démo</button><button class="btn primary sm" id="u-new">+ Créer un compte</button>' : ''}</span></header>
+      <div class="tbl-wrap" id="u-tbl"></div></section>
+      ${can ? '<p class="small muted" style="margin-top:10px">« Tester ce profil » ouvre l’application avec les droits du compte choisi, pour vérifier ce qu’il voit et peut modifier. Un bandeau permet de revenir à votre compte.</p>' : PS.lockHTML('Gestion des comptes')}`;
+  }
+  function bindComptes() {
+    const can = PS.isAdminGeneral(); S.userFilter = S.userFilter || { q: '', role: '' };
+    const draw = () => {
+      const f = S.userFilter, q = f.q.toLowerCase(), me = (PS.impersonator || PS.user).login;
+      const rows = PS.USERS.filter(u => (!f.role || u.role === f.role) && (!q || (u.nom + ' ' + u.login).toLowerCase().includes(q)));
+      $('#u-tbl').innerHTML = `<table class="tbl"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th><th>Statut</th>${can ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(u => { const r = PS.ROLES[u.role]; return `<tr><td><b>${esc(u.nom)}</b>${u.login === me ? ' <span class="chip s-neutral">vous</span>' : ''}<div class="small muted mono">${esc(u.login)}</div></td><td>${r ? esc(r.label) : '<span class="chip s-bad">Rôle supprimé</span>'}</td><td>${esc(perimLabel(u))}</td><td><span class="chip ${u.actif === false ? 's-bad' : 's-ok'}">${u.actif === false ? 'Désactivé' : 'Actif'}</span></td>${can ? `<td><div class="row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-u-edit="${esc(u.login)}">Modifier</button>${u.login !== me ? `<button class="btn sm" data-u-imp="${esc(u.login)}" ${u.actif === false ? 'disabled' : ''}>Tester ce profil</button>` : ''}</div></td>` : ''}</tr>` }).join('') || `<tr><td colspan="5" class="muted">Aucun compte ne correspond.</td></tr>`}</tbody></table>`;
+      $$('[data-u-edit]').forEach(b => b.addEventListener('click', () => userForm(PS.USERS.find(u => u.login === b.dataset.uEdit), draw)));
+      $$('[data-u-imp]').forEach(b => b.addEventListener('click', () => PS.impersonate(b.dataset.uImp)));
+    };
+    $('#uf-q').addEventListener('input', e => { S.userFilter.q = e.target.value; draw() });
+    $('#uf-r').addEventListener('change', e => { S.userFilter.role = e.target.value; draw() });
+    const nb = $('#u-new'); if (nb) nb.addEventListener('click', () => userForm(null, draw));
+    const rs = $('#u-reset'); if (rs) rs.addEventListener('click', () => {
+      const m = PS.modal('Réinitialiser la démonstration', '<p style="margin:0">Les comptes et les rôles reviennent à leur état d’origine. Les comptes créés et les permissions modifiées seront perdus.</p>', '<button class="btn" data-close>Annuler</button><button class="btn primary" id="rs-ok">Réinitialiser</button>');
+      $('#rs-ok', m).addEventListener('click', () => { const me = (PS.impersonator || PS.user).login; PS.resetAdmin(); PS.closeModal(); PS.log('a réinitialisé les comptes et rôles de démonstration'); if (!signIn(me)) { signOut(); return } PS.impersonator = null; shell(); go('admin'); PS.toast('Comptes et rôles réinitialisés.') });
+    });
+    draw();
+  }
+  function perimField(roleKey, cur) {
+    const e = (PS.ROLES[roleKey] || {}).edit;
+    if (e === 'region') return `<div class="field"><label for="uf-pr">Région</label><select id="uf-pr">${PS.D.regions.map(r => `<option ${cur && cur.type === 'region' && cur.nom === r.n ? 'selected' : ''}>${esc(r.n)}</option>`).join('')}</select></div>`;
+    if (e === 'departement') return `<div class="field"><label for="uf-pd">Département</label><select id="uf-pd">${PS.D.regions.map(r => `<optgroup label="${esc(r.n)}">${r.children.map(d => `<option ${cur && cur.type === 'departement' && cur.nom === d.n ? 'selected' : ''}>${esc(d.n)}</option>`).join('')}</optgroup>`).join('')}</select></div>`;
+    return `<div class="field"><span class="small muted">Périmètre : Sénégal (national)${e === 'aucun' ? ', en lecture seule' : ''}.</span></div>`;
+  }
+  function userForm(u, after) {
+    const isNew = !u, me = (PS.impersonator || PS.user).login;
+    const roleKey = u ? u.role : 'admin_section';
+    const m = PS.modal(isNew ? 'Créer un compte' : `Modifier le compte ${u.nom}`, `
+      <div class="grid g-2">
+        <div class="field"><label for="uf-n">Nom complet</label><input id="uf-n" value="${esc(u ? u.nom : '')}" placeholder="Prénom Nom"></div>
+        <div class="field"><label for="uf-l">Identifiant</label><input id="uf-l" value="${esc(u ? u.login : '')}" placeholder="ex. section.thies" autocapitalize="none" spellcheck="false" ${isNew ? '' : 'readonly'}></div>
+        <div class="field"><label for="uf-p">${isNew ? 'Mot de passe' : 'Nouveau mot de passe'}</label><input id="uf-p" type="text" autocomplete="off" placeholder="${isNew ? '8 caractères minimum' : 'Laisser vide pour ne pas changer'}"></div>
+        <div class="field"><label for="uf-role">Rôle</label><select id="uf-role">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${k === roleKey ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div>
+      </div>
+      <div id="uf-perim">${perimField(roleKey, u && u.perimetre)}</div>
+      <div class="small muted" id="uf-rdesc">${esc((PS.ROLES[roleKey] || {}).desc || '')}</div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="uf-a" ${!u || u.actif !== false ? 'checked' : ''} ${u && u.login === me ? 'disabled' : ''}> Compte actif</label>
+      <p class="notice">Démonstration : les comptes sont enregistrés dans ce navigateur. En production, ils sont créés dans Keycloak et l’utilisateur reçoit un lien d’activation pour choisir son mot de passe.</p>`,
+      `${!isNew && u.login !== me ? '<button class="btn" id="uf-del" style="margin-right:auto;color:var(--coral)">Supprimer</button>' : ''}<button class="btn" data-close>Annuler</button><button class="btn primary" id="uf-ok">${isNew ? 'Créer le compte' : 'Enregistrer'}</button>`);
+    $('#uf-role', m).addEventListener('change', e => { $('#uf-perim', m).innerHTML = perimField(e.target.value, u && u.perimetre); $('#uf-rdesc', m).textContent = PS.ROLES[e.target.value].desc || '' });
+    $('#uf-ok', m).addEventListener('click', () => {
+      const nom = $('#uf-n', m).value.trim(), login = $('#uf-l', m).value.trim().toLowerCase(), pw = $('#uf-p', m).value, role = $('#uf-role', m).value;
+      if (!nom) { PS.toast('Indiquez le nom de la personne.'); return }
+      if (isNew && !/^[a-z0-9][a-z0-9._-]{2,30}$/.test(login)) { PS.toast('Identifiant : 3 à 31 caractères, lettres minuscules, chiffres, point, tiret.'); return }
+      if (isNew && PS.USERS.some(x => x.login === login)) { PS.toast(`L’identifiant « ${login} » existe déjà.`); return }
+      if (isNew && pw.length < 8 && !(login === 'admin' && pw === 'admin')) { PS.toast('Le mot de passe doit faire au moins 8 caractères.'); return }
+      if (!isNew && pw && pw.length < 8) { PS.toast('Le nouveau mot de passe doit faire au moins 8 caractères.'); return }
+      const e = PS.ROLES[role].edit;
+      const perimetre = e === 'region' ? { type: 'region', nom: $('#uf-pr', m).value } : e === 'departement' ? { type: 'departement', nom: $('#uf-pd', m).value } : { type: 'national' };
+      const actif = $('#uf-a', m).checked;
+      if (!isNew && u.role === 'admin_general' && (role !== 'admin_general' || !actif) && PS.USERS.filter(x => x.role === 'admin_general' && x.actif !== false).length <= 1) { PS.toast('Il doit rester au moins un administrateur général actif.'); return }
+      if (isNew) { PS.USERS.push({ login, password: pw, nom, role, perimetre, actif }); PS.log(`a créé le compte ${login} (${PS.ROLES[role].label})`) }
+      else { Object.assign(u, { nom, role, perimetre, actif }); if (pw) u.password = pw; PS.log(`a modifié le compte ${u.login}`) }
+      PS.saveAdmin(); PS.closeModal(); PS.toast(isNew ? `Compte ${login} créé.` : `Compte ${u.login} enregistré.`);
+      if (!isNew && u.login === PS.user.login) { PS.role = PS.ROLES[u.role]; shell(); go('admin'); return }
+      after();
+    });
+    const del = $('#uf-del', m); if (del) del.addEventListener('click', () => {
+      if (u.role === 'admin_general' && PS.USERS.filter(x => x.role === 'admin_general').length <= 1) { PS.toast('Impossible de supprimer le dernier administrateur général.'); return }
+      del.outerHTML = `<span style="margin-right:auto;display:flex;gap:6px;align-items:center" class="small">Supprimer définitivement ? <button class="btn sm" id="uf-del2" style="color:var(--coral)">Confirmer</button></span>`;
+      $('#uf-del2', m).addEventListener('click', () => { PS.USERS = PS.USERS.filter(x => x !== u); PS.saveAdmin(); PS.log(`a supprimé le compte ${u.login}`); PS.closeModal(); PS.toast(`Compte ${u.login} supprimé.`); after() });
+    });
+  }
+  function adminRoles(can) {
+    const head = MODLIST.map(([k, l]) => `<th class="perm" title="${esc(l)}">${esc(l.replace(' & ', ' '))}</th>`).join('');
+    return `<section class="panel"><header><h3>Permissions par rôle</h3><span class="sub">cochez les modules accessibles ; la modification reste limitée au périmètre</span><span class="right">${can ? '<button class="btn sm" id="r-new">+ Créer un rôle</button><button class="btn primary sm" id="r-save">Enregistrer les permissions</button>' : ''}</span></header>
+      <div class="tbl-wrap"><table class="tbl perm-tbl"><thead><tr><th>Rôle</th>${head}<th>Modification</th><th class="perm">Données nominatives</th><th class="n">Comptes</th>${can ? '<th></th>' : ''}</tr></thead><tbody>
+      ${Object.entries(PS.ROLES).map(([k, r]) => { const lock = !can || k === 'admin_general'; return `<tr data-role="${k}"><td><b>${esc(r.label)}</b><div class="small muted mono">${esc(k)}</div></td>${MODLIST.map(([m]) => `<td class="perm"><input type="checkbox" data-mod="${m}" aria-label="${esc(r.label)} : ${esc(m)}" ${r.modules.includes(m) ? 'checked' : ''} ${lock ? 'disabled' : ''}></td>`).join('')}<td><select data-edit ${lock ? 'disabled' : ''} aria-label="Périmètre de modification">${Object.entries(EDIT_LBL).map(([e, l]) => `<option value="${e}" ${r.edit === e ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td class="perm"><input type="checkbox" data-pii ${r.pii ? 'checked' : ''} ${lock ? 'disabled' : ''} aria-label="Données nominatives"></td><td class="n">${usersOf(k)}</td>${can ? `<td>${r.custom ? `<button class="btn sm" data-r-del="${k}" ${usersOf(k) ? 'disabled title="Rôle attribué à des comptes"' : ''}>Supprimer</button>` : ''}</td>` : ''}</tr>` }).join('')}
+      </tbody></table></div>
+      <div class="body small muted">Le rôle Administrateur général est verrouillé (accès complet) pour éviter de perdre l’accès à l’administration. Tous les rôles consultent la carte du Sénégal entier ; la modification et les données nominatives sont limitées au périmètre du compte. En production, ces règles sont appliquées par l’API et par PostgreSQL (Row-Level Security).</div></section>
+      ${can ? '' : PS.lockHTML('Rôles et permissions')}`;
+  }
+  function bindRoles() {
+    const sv = $('#r-save'); if (sv) sv.addEventListener('click', () => {
+      $$('tr[data-role]').forEach(tr => { const k = tr.dataset.role; if (k === 'admin_general') return; const r = PS.ROLES[k];
+        r.modules = $$('[data-mod]', tr).filter(c => c.checked).map(c => c.dataset.mod); r.edit = $('[data-edit]', tr).value; r.pii = $('[data-pii]', tr).checked;
+        if (!r.modules.length) r.modules = ['carte'] });
+      PS.saveAdmin(); PS.log('a modifié les permissions des rôles'); PS.role = PS.ROLES[PS.user.role]; shell(); go('admin'); PS.toast('Permissions enregistrées.');
+    });
+    const nw = $('#r-new'); if (nw) nw.addEventListener('click', () => {
+      const m = PS.modal('Créer un rôle', `<div class="grid g-2"><div class="field"><label for="rn-l">Libellé</label><input id="rn-l" placeholder="ex. Responsable communication"></div><div class="field"><label for="rn-b">Partir du rôle</label><select id="rn-b">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}" ${k === 'analyste' ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div></div><div class="field"><label for="rn-d">Description</label><input id="rn-d" placeholder="Ce que ce rôle peut faire"></div><p class="small muted" style="margin:0">Le nouveau rôle reprend les permissions du rôle de départ ; ajustez-les ensuite dans le tableau.</p>`, '<button class="btn" data-close>Annuler</button><button class="btn primary" id="rn-ok">Créer le rôle</button>');
+      $('#rn-ok', m).addEventListener('click', () => {
+        const l = $('#rn-l', m).value.trim(); if (!l) { PS.toast('Donnez un libellé au rôle.'); return }
+        let k = l.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''); if (!k || PS.ROLES[k]) k = (k || 'role') + '_' + Date.now().toString(36).slice(-4);
+        const b = PS.ROLES[$('#rn-b', m).value];
+        PS.ROLES[k] = { label: l, court: l.length > 18 ? l.slice(0, 17) + '…' : l, desc: $('#rn-d', m).value.trim() || `Rôle créé à partir de « ${b.label} ».`, edit: b.edit === 'national' ? 'aucun' : b.edit, pii: b.pii, modules: b.modules.filter(x => x !== 'admin'), custom: true };
+        PS.saveAdmin(); PS.log(`a créé le rôle « ${l} »`); PS.closeModal(); render(); PS.toast(`Rôle « ${l} » créé : réglez ses permissions puis enregistrez.`);
+      });
+    });
+    $$('[data-r-del]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.rDel; const l = PS.ROLES[k].label; delete PS.ROLES[k]; PS.saveAdmin(); PS.log(`a supprimé le rôle « ${l} »`); render(); PS.toast(`Rôle « ${l} » supprimé.`) }));
+  }
+  function adminJournal() {
+    return `<section class="panel"><header><h3>Journal des modifications</h3><span class="sub">qui a fait quoi, et quand</span></header><div class="body feed" style="padding-block:4px">${PS.AUDIT().slice(0, 60).map(a => `<div class="it"><span class="t">${a.t}</span><span><b>${esc(a.u)}</b> ${esc(a.a)}</span></div>`).join('')}</div></section>`;
+  }
+  function adminConn() {
+    const conns = [['CS', 'CivicScope', 'Résultats électoraux par scrutin : régions, départements, communes, bureaux de vote. Score, rang, participation.', 'Connecté', 's-ok'], ['QF', 'QFieldCloud', 'Synchronisation des projets QGIS terrain (sections, permanences, zones).', 'Connecté', 's-ok'], ['KB', 'KoboToolbox', 'Formulaires XLSForm (porte-à-porte, antennes, cartes).', 'Connecté', 's-ok'], ['ODK', 'ODK Central', 'Alternative auto-hébergée pour les formulaires XLSForm.', 'Disponible', 's-neutral'], ['SMS', 'Passerelle SMS (opérateur)', 'Envoi des SMS via l’API de l’opérateur, accusés de réception.', 'À configurer', 's-warn'], ['VOX', 'Serveur vocal (Asterisk)', 'Appels vocaux automatisés : diffusion d’un message enregistré via un trunk SIP opérateur.', 'À configurer', 's-warn'], ['API', 'API REST PoliScope', 'FastAPI + OpenAPI : interconnexion avec les outils du parti.', 'Disponible', 's-neutral']];
+    return `<div class="grid g-2" style="align-items:start">
+      <section class="panel"><header><h3>Connecteurs et sources</h3></header><div class="body" style="padding-block:4px">${conns.map(c => `<div class="conn"><span class="lg">${c[0]}</span><div class="tx"><b>${c[1]}</b><span class="muted">${c[2]}</span></div><span class="chip ${c[4]}">${c[3]}</span></div>`).join('')}</div></section>
+      <div class="stack">
         <section class="panel"><header><h3>Pile technique 100 % open source</h3></header><div class="body small" style="display:grid;gap:8px">
-          ${[['Données', 'PostgreSQL 16 + PostGIS 3 (limites administratives CEGIT, maillage, CRM)'], ['API', 'FastAPI (Python), OpenAPI 3, pg_featureserv / Martin pour les tuiles vectorielles'], ['Identité', 'Keycloak (OpenID Connect), rôles et périmètres'], ['Cartographie', 'Leaflet, fonds OpenStreetMap, QGIS Server en option'], ['Terrain', 'QField / QFieldCloud, KoboToolbox, ODK Central'], ['Rapports', 'jsPDF (navigateur) ; WeasyPrint côté serveur'], ['Exploitation', 'Docker Compose, Nginx, MinIO (pièces jointes), sauvegardes pgBackRest']].map(r => `<div><b>${r[0]}</b> · <span class="muted">${r[1]}</span></div>`).join('')}
+          ${[['Données', 'PostgreSQL 16 + PostGIS 3 (limites administratives CEGIT, maillage, CRM)'], ['API', 'FastAPI (Python), OpenAPI 3, Martin pour les tuiles vectorielles'], ['Identité', 'Keycloak (OpenID Connect), rôles et périmètres'], ['Cartographie', 'Leaflet, fonds OpenStreetMap'], ['Terrain', 'QField / QFieldCloud, KoboToolbox, ODK Central'], ['Messages vocaux', 'Asterisk (serveur vocal), trunk SIP opérateur'], ['Rapports', 'jsPDF (navigateur) ; WeasyPrint côté serveur'], ['Exploitation', 'Docker Compose, Nginx, MinIO, pgBackRest']].map(r => `<div><b>${r[0]}</b> · <span class="muted">${r[1]}</span></div>`).join('')}
         </div></section>
         <section class="panel"><header><h3>Protection des données</h3></header><div class="body" style="display:grid;gap:10px;font-size:14px">
           <div><b>Cadre légal</b><div class="muted">Loi n° 2008-12 sur la protection des données à caractère personnel ; déclaration du traitement auprès de la CDP.</div></div>
           <div><b>Minimisation</b><div class="muted">Aucune donnée d’opinion, d’ethnie ou de religion. Numéros masqués, nominatifs limités au périmètre.</div></div>
-          <div><b>Consentement</b><div class="muted">Recueilli à la saisie (y compris dans les formulaires QField/Kobo), daté, renouvelé tous les 24 mois.</div></div>
+          <div><b>Consentement</b><div class="muted">Recueilli à la saisie, daté, renouvelé tous les 24 mois.</div></div>
           <div><b>Hébergement</b><div class="muted">Option d’hébergement au Sénégal ; sauvegardes chiffrées, exports tracés.</div></div>
         </div></section>
-      </div>`;
-    },
-    bind() {
-      const b = $('#addUser'); if (b) b.addEventListener('click', () => {
-        const m = PS.modal('Inviter un utilisateur', `<div class="grid g-2"><div class="field"><label for="iu-n">Nom</label><input id="iu-n"></div><div class="field"><label for="iu-r">Rôle</label><select id="iu-r">${Object.entries(PS.ROLES).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('')}</select></div><div class="field" style="grid-column:1/-1"><label for="iu-p">Périmètre</label>${PS.terrSelect('iu-p', 'nat', false)}</div></div><p class="notice">En production, l’invitation crée le compte dans Keycloak et envoie un lien d’activation.</p>`, `<button class="btn" data-close>Annuler</button><button class="btn primary" id="iu-ok">Envoyer l’invitation</button>`);
-        $('#iu-ok', m).addEventListener('click', () => { const n = $('#iu-n', m).value.trim(); if (!n) { PS.toast('Indiquez le nom de la personne.'); return } PS.log(`a invité ${n} (${PS.ROLES[$('#iu-r', m).value].label})`); PS.closeModal(); PS.toast(`Invitation préparée pour ${n}.`) });
-      });
-    }
-  };
+      </div></div>`;
+  }
 
   /* ================= Démarrage ================= */
   async function boot() {
@@ -731,10 +1182,13 @@ window.PS = window.PS || {};
     }
     // modifications locales de la démo
     for (const [id, v] of Object.entries(extra.edits)) { const s = PS.D.sections.find(x => x.id === id); if (s) Object.assign(s, v) }
+    for (const [id, v] of Object.entries(extra.actState)) { const x = PS.D.actions.find(y => y.id === id); if (x) Object.assign(x, v) }
+    for (const [id, v] of Object.entries(extra.remState)) { const x = PS.D.remontees.find(y => y.id === id); if (x) x.statut = v }
     PS.NAT = natUnit();
     MAXINS = { dep: Math.max(...PS.D.depts.map(d => d.inscrits)), com: Math.max(...PS.D.communes.map(d => d.inscrits)), reg: Math.max(...PS.D.regions.map(d => d.inscrits)) };
-    let login = null; try { login = sessionStorage.getItem(SKEY) } catch (e) { }
-    if (login && signIn(login)) { shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]) } else renderLogin();
+    loadAdmin();
+    let login = null, imp = null; try { login = sessionStorage.getItem(SKEY); imp = sessionStorage.getItem(IMPKEY) } catch (e) { }
+    if (login && signIn(login)) { if (imp) PS.impersonator = PS.USERS.find(x => x.login === imp) || null; shell(); const h = location.hash.slice(1); go(VIEWS[h] && PS.canModule(h) ? h : PS.role.modules[0]) } else renderLogin();
     const rr = () => { if (!$('.modal-bg') && PS.user) render() };
     try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rr) } catch (e) { }
     new MutationObserver(rr).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });

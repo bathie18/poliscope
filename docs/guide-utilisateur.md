@@ -2,7 +2,7 @@
 
 ## Se connecter
 
-Ouvrez l'application, puis saisissez votre identifiant et votre mot de passe. En démonstration, les identifiants fictifs sont affichés sous chaque profil (par exemple `admin` / `admin`) ; on peut aussi cliquer directement sur un profil. Le bandeau du haut affiche ensuite votre nom, votre profil et votre périmètre. Le bouton **Se déconnecter** permet de changer de profil.
+Ouvrez l'application, puis saisissez l'identifiant et le mot de passe remis par l'administrateur de votre parti. En démonstration, les comptes de test sont listés dans le README (par exemple `admin` / `admin`). Le bandeau du haut affiche ensuite votre nom, votre profil et votre périmètre. Le bouton **Se déconnecter** ferme la session.
 
 ## La carte stratégique
 
@@ -29,12 +29,47 @@ La carte s'ouvre sur votre périmètre. Le bouton **Sénégal** affiche tout le 
 
 Une action hors de votre périmètre affiche un **cadenas** avec le message « lecture seule » et le périmètre que vous pouvez modifier.
 
+## Administration (administrateur général)
+
+- **Comptes** : créer un compte (nom, identifiant, mot de passe, rôle, périmètre), le modifier, le désactiver ou le supprimer. Il reste toujours au moins un administrateur général actif.
+- **Tester ce profil** : ouvre l'application avec les droits du compte choisi, pour vérifier ce qu'il voit et peut modifier. Un bandeau jaune rappelle la session de test ; « Revenir à mon compte » la termine.
+- **Rôles et permissions** : cochez les modules accessibles à chaque rôle, choisissez son périmètre de modification (tout le Sénégal, sa région, son département, aucun) et l'accès aux données nominatives, puis **Enregistrez**. « Créer un rôle » part d'un rôle existant. Le rôle Administrateur général est verrouillé.
+- **Journal** : toutes les connexions, modifications, clôtures, imports et exports.
+
+Un administrateur régional consulte ces écrans sans pouvoir les modifier.
+
+## Actions terrain : suivi, clôture et historique
+
+- **Suivi en cours** : tableau par étape (à planifier, planifiée, en cours, terminée depuis 30 jours).
+- **Clôturer** une action en cours ouvre la **fiche bilan** : réalisé, favorables, indécis, pas intéressés, absents (ou participants, ou cartes placées), points à retenir, difficultés. Pour le porte-à-porte, la fiche est pré-remplie à partir des remontées terrain validées.
+- **Historique et bilans** : toutes les actions terminées, filtrables par territoire, période et type, avec les chiffres clés (personnes touchées, atteinte des objectifs, accueil favorable) et un export CSV.
+- La fiche de chaque territoire, sur la carte, rappelle ses actions des six derniers mois. Le rapport PDF peut inclure la section « Actions terminées ».
+
+## Collecte terrain
+
+- **Appli terrain** : choisissez l'action, saisissez les résultats porte par porte ou appel par appel (hors connexion), puis **Synchroniser**. Le réalisé de l'action avance et les fiches apparaissent sur la carte.
+- **Remontées** : toutes les fiches, filtrables par action, contrôle, commune ou collecteur.
+- **À valider** : fiches signalées par les contrôles (doublon possible, consentement manquant, hors périmètre), à valider ou rejeter.
+- **Importer un fichier** : export CSV de KoboToolbox ou d'ODK, ou couche GeoJSON de QField. Un fichier d'exemple est téléchargeable pour essayer.
+- **Collecteurs** : nombre de fiches, accueil favorable et fiches à vérifier par collecteur.
+- Sur la carte, la couche **Remontées terrain** affiche chaque fiche selon son résultat.
+
+## Messages et canal vocal
+
+Choisissez le canal **SMS**, **WhatsApp** ou **Vocal** (icône micro), puis la cible (statut, étiquette). Seuls les contacts consentants sont comptés.
+
+Pour un message vocal :
+1. Choisissez le **mode de diffusion** : *appel vocal automatisé* (le serveur vocal appelle chaque contact et diffuse l'enregistrement ; fonctionne sur tous les téléphones, sans internet, et convient aux publics non lecteurs ; touche 1 pour confirmer) ou *note vocale WhatsApp*.
+2. Choisissez la **langue** de l'enregistrement.
+3. **Sur ordinateur** : cliquez sur le micro, autorisez l'accès au micro du PC ou du casque, parlez, puis cliquez à nouveau pour arrêter (90 secondes au maximum). Vous pouvez aussi **importer un fichier audio** enregistré avec un téléphone (MP3, WAV, M4A, OGG).
+4. Écoutez l'enregistrement, puis **Programmez l'envoi**. Le champ « Script » sert d'aide à la lecture et n'est pas envoyé.
+
 ## Le rapport PDF territorial
 
-Menu **Rapports PDF & exports** :
-1. Choisissez le territoire : Sénégal, une région, un département ou une commune.
-2. Cochez les contenus : carte, positions des sections et coordinations, tableau de bord, sous-territoires, liste géolocalisée des sections, recommandations.
-3. Contrôlez l'aperçu de la carte, puis cliquez sur **Générer le PDF**.
+Menu **Rapports** :
+1. Choisissez l'**échelle** (régions, départements ou communes), puis **recherchez** la localité. Les raccourcis « Sénégal entier » et « Mon périmètre » sont aussi disponibles.
+2. Choisissez le **modèle** : rapport complet, fiche de synthèse (une page), rapport maillage, ou bilan d'activité terrain. « Ajuster le contenu » permet de cocher ou décocher chaque partie.
+3. Contrôlez l'aperçu de la carte, puis cliquez sur **Générer le PDF**. Les rapports produits restent listés dans « Rapports générés » pendant la session et peuvent être régénérés.
 
 Le rapport ne contient les noms des responsables que pour les sections de votre périmètre.
 
