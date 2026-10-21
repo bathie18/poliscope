@@ -47,7 +47,23 @@ Dans l'application, la description de chaque indicateur s'affiche dans le pannea
   | Accessibilité | indice 0–1 tiré des isochrones | 1 |
 
   `priorité = 100 × Σ(poids × critère) ÷ Σ poids`
-- **Réglage** : les poids se modifient dans le module **Priorisation**. Le classement, la matrice score × couverture et la carte se mettent à jour.
+- **Réglage** : dans le module **Priorisation**, on choisit une stratégie prête à l'emploi ou on règle chaque poids de 0 à 5.
+
+  | Stratégie | Poids électoral | Marge | Participation | Déficit de couverture | Recul d'activité | Accessibilité | Question posée |
+  |---|---|---|---|---|---|---|---|
+  | Équilibrée (référence) | 3 | 2 | 2 | 3 | 1 | 1 | Où l'effort rapporte-t-il le plus, tous critères confondus ? |
+  | Conquête électorale | 4 | 4 | 3 | 1 | 0 | 1 | Où gagner des voix dans de gros électorats ? |
+  | Implantation | 2 | 1 | 1 | 5 | 0 | 2 | Où ouvrir des antennes en priorité ? |
+  | Relance du réseau | 2 | 1 | 0 | 1 | 5 | 1 | Quelles sections s'essoufflent ? |
+  | Mobilisation avant scrutin | 5 | 2 | 4 | 0 | 1 | 3 | Où toucher vite beaucoup d'électeurs mobilisables ? |
+
+  On peut aussi enregistrer ses propres poids sous un nom.
+- **Effets d'un changement de poids** : il s'agit d'une simulation de **stratégie**, pas d'une prévision électorale.
+  - Le **classement** se réordonne. La colonne « Évol. » indique les places gagnées (▲) ou perdues (▼) par rapport à la stratégie Équilibrée.
+  - La **matrice** ne déplace pas les points : leur position dépend du score et de la couverture. En revanche, les 10 territoires les plus prioritaires (15 pour les communes) sont cerclés et numérotés, et les autres sont estompés.
+  - La **carte**, avec l'indicateur « Score de priorité » (bouton « Voir sur la carte »), se recolore.
+  - Le tableau de bord, les fiches de territoire et le rapport PDF utilisent la même pondération.
+- **Simulation chiffrée** : le curseur « Ouvrir N antennes » de la fiche d'un département (carte) recalcule la couverture, la typologie et la priorité après ouverture.
 - **Usage** : classer les territoires et répartir les moyens.
 
 ### Score électoral du parti

@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 0.3.1 — 21 octobre 2026
+- **Priorisation** : cinq stratégies prêtes à l'emploi et stratégies personnelles enregistrables ; matrice mettant en évidence et numérotant les territoires les plus prioritaires ; colonne « Évol. » (places gagnées ou perdues par rapport à la stratégie Équilibrée) ; bouton « Voir sur la carte ».
+- **Carte** : la légende passe en bas à droite, repliable, et reste visible quand une fiche est ouverte ; zoom et échelle en bas à gauche.
+- Correction : l'ouverture d'une fiche étirait la zone de carte au-delà de l'écran.
+
 ## 0.3.0 — 21 octobre 2026
 - **Accueil** : carte du Sénégal en fond, encart de connexion au centre, description du produit ; les profils de démonstration ne sont plus affichés.
 - **Administration** : gestion des comptes (création, modification, désactivation, suppression), des rôles et des permissions (modules, périmètre, données nominatives, nouveaux rôles), « Tester ce profil » avec retour au compte administrateur, journal.

@@ -29,6 +29,16 @@ La carte s'ouvre sur votre périmètre. Le bouton **Sénégal** affiche tout le 
 
 Une action hors de votre périmètre affiche un **cadenas** avec le message « lecture seule » et le périmètre que vous pouvez modifier.
 
+## Priorisation
+
+1. Choisissez le territoire et l'échelle (départements ou communes).
+2. Choisissez une **stratégie** (Équilibrée, Conquête électorale, Implantation, Relance du réseau, Mobilisation avant scrutin) ou réglez les six curseurs. « Enregistrer ces poids… » conserve une pondération personnalisée.
+3. Lisez le **classement** : la colonne « Évol. » montre les places gagnées ou perdues par rapport à la stratégie Équilibrée.
+4. Sur la **matrice**, les territoires les plus prioritaires sont cerclés et numérotés.
+5. **Voir sur la carte** ouvre la carte stratégique avec l'indicateur « Score de priorité ».
+
+La **légende** de la carte est en bas à droite ; le chevron la replie ou la déplie.
+
 ## Administration (administrateur général)
 
 - **Comptes** : créer un compte (nom, identifiant, mot de passe, rôle, périmètre), le modifier, le désactiver ou le supprimer. Il reste toujours au moins un administrateur général actif.

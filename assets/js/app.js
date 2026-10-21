@@ -383,25 +383,58 @@ window.PS = window.PS || {};
   /* =========================================================
      PRIORISATION
      ========================================================= */
+  /* Stratégies de pondération prêtes à l'emploi (ordre des critères : poids, marge, particip, deficit, activite, access) */
+  const STRATS = {
+    equilibree: { l: 'Équilibrée', d: 'Réglage de référence : tous les critères comptent.', w: { poids: 3, marge: 2, particip: 2, deficit: 3, activite: 1, access: 1 } },
+    conquete: { l: 'Conquête électorale', d: 'Gros électorats où notre score peut progresser.', w: { poids: 4, marge: 4, particip: 3, deficit: 1, activite: 0, access: 1 } },
+    implantation: { l: 'Implantation', d: 'Zones blanches : communes sans section à couvrir en priorité.', w: { poids: 2, marge: 1, particip: 1, deficit: 5, activite: 0, access: 2 } },
+    relance: { l: 'Relance du réseau', d: 'Sections qui s’essoufflent, avant que cela se voie dans les urnes.', w: { poids: 2, marge: 1, particip: 0, deficit: 1, activite: 5, access: 1 } },
+    mobilisation: { l: 'Mobilisation avant scrutin', d: 'Toucher vite beaucoup d’électeurs mobilisables et accessibles.', w: { poids: 5, marge: 2, particip: 4, deficit: 0, activite: 1, access: 3 } }
+  };
+  PS.STRATS = STRATS;
+  PS.priorityW = (u, W) => { let s = 0, t = 0; for (const c of COMPONENTS) { const wi = +W[c.k] || 0; s += wi * c.f(u); t += wi } return t ? Math.round(s / t * 100) : 0 };
+  const sameW = (a, b) => COMPONENTS.every(c => (+a[c.k] || 0) === (+b[c.k] || 0));
+  const SKEY_STRAT = 'poliscope-strategies-v1';
+  let myStrats = []; try { myStrats = JSON.parse(localStorage.getItem(SKEY_STRAT) || '[]') || [] } catch (e) { myStrats = [] }
+  const saveStrats = () => { try { localStorage.setItem(SKEY_STRAT, JSON.stringify(myStrats)) } catch (e) { } };
+  function currentStrat() { for (const [k, s] of Object.entries(STRATS)) if (sameW(S.weights, s.w)) return { k, l: s.l }; const m = myStrats.find(s => sameW(S.weights, s.w)); return m ? { k: 'my:' + m.l, l: m.l } : { k: 'perso', l: 'Personnalisée' } }
+  const TOPN = () => S.prioLevel === 'com' ? 15 : 10;
   VIEWS.priorites = {
     html() {
-      const T = PS.unit(S.focus);
-      return `<div class="view-head"><div><div class="label">Priorisation · ${esc(PS.terrLabel(T))}</div><h1>Où concentrer nos efforts ?</h1><p>Le score de priorité combine six critères. Ajustez leur poids : le classement, la matrice et la carte se mettent à jour.</p></div>
-      <div class="actions">${PS.terrSelect('focusSel', S.focus, false)}<div class="seg" id="plvl" style="min-width:220px">${[['dep', 'Départements'], ['com', 'Communes']].map(([k, l]) => `<button data-l="${k}" aria-pressed="${S.prioLevel === k}">${l}</button>`).join('')}</div><button class="btn" id="resetW">Poids par défaut</button></div></div>
-      <div class="grid" style="grid-template-columns:minmax(0,280px) minmax(0,1fr);align-items:start" id="prioGrid">
-        <section class="panel"><header><h3>Pondération</h3></header><div class="body weights">
-          ${COMPONENTS.map(c => `<div class="w-row"><label for="w-${c.k}">${c.l}</label><output id="o-${c.k}">${S.weights[c.k]}</output><input type="range" min="0" max="5" step="1" id="w-${c.k}" data-w="${c.k}" value="${S.weights[c.k]}"><div class="hint">${c.h}</div></div>`).join('')}
-          <button class="linkbtn" data-info="priorite">Comment le score est-il calculé ?</button>
-        </div></section>
+      const T = PS.unit(S.focus), cs = currentStrat();
+      return `<div class="view-head"><div><div class="label">Priorisation · ${esc(PS.terrLabel(T))}</div><h1>Où concentrer nos efforts ?</h1><p>Choisissez une stratégie ou réglez le poids des six critères. Le classement, les territoires mis en évidence sur la matrice et la carte « Score de priorité » se mettent à jour.</p></div>
+      <div class="actions">${PS.terrSelect('focusSel', S.focus, false)}<div class="seg" id="plvl" style="min-width:220px">${[['dep', 'Départements'], ['com', 'Communes']].map(([k, l]) => `<button data-l="${k}" aria-pressed="${S.prioLevel === k}">${l}</button>`).join('')}</div><button class="btn primary" id="toMap">Voir sur la carte</button></div></div>
+      <div class="grid" style="grid-template-columns:minmax(0,290px) minmax(0,1fr);align-items:start" id="prioGrid">
         <div class="stack">
-          <section class="panel"><header><h3>Matrice score × couverture</h3><span class="sub">taille = inscrits · cliquez pour ouvrir la fiche</span></header><div class="body scatter" id="scatter"></div></section>
+          <section class="panel"><header><h3>Stratégie</h3><span class="right chip s-neutral" id="stratNow">${esc(cs.l)}</span></header><div class="body" style="display:grid;gap:6px">
+            ${Object.entries(STRATS).map(([k, s]) => `<button type="button" class="strat" data-strat="${k}" aria-pressed="${cs.k === k}"><b>${s.l}</b><span class="small muted">${s.d}</span></button>`).join('')}
+            ${myStrats.length ? `<div class="label" style="margin-top:6px">Mes stratégies</div>` + myStrats.map((s, i) => `<div class="row" style="gap:6px;flex-wrap:nowrap"><button type="button" class="strat" style="flex:1" data-mystrat="${i}" aria-pressed="${cs.k === 'my:' + s.l}"><b>${esc(s.l)}</b></button><button type="button" class="btn sm ghost" data-delstrat="${i}" aria-label="Supprimer la stratégie ${esc(s.l)}">×</button></div>`).join('') : ''}
+            <button type="button" class="btn sm" id="saveStrat" style="justify-self:start;margin-top:4px" ${cs.k === 'perso' ? '' : 'disabled title="Modifiez les poids pour créer une stratégie"'}>Enregistrer ces poids…</button>
+          </div></section>
+          <section class="panel"><header><h3>Pondération</h3></header><div class="body weights">
+            ${COMPONENTS.map(c => `<div class="w-row"><label for="w-${c.k}">${c.l}</label><output id="o-${c.k}">${S.weights[c.k]}</output><input type="range" min="0" max="5" step="1" id="w-${c.k}" data-w="${c.k}" value="${S.weights[c.k]}"><div class="hint">${c.h}</div></div>`).join('')}
+            <button class="linkbtn" data-info="priorite">Comment le score est-il calculé ?</button>
+          </div></section>
+        </div>
+        <div class="stack">
+          <section class="panel"><header><h3>Matrice score × couverture</h3><span class="sub">taille = inscrits · cliquez pour ouvrir la fiche</span></header><div class="body scatter"><div id="scatter"></div>
+            <p class="small muted" style="margin:8px 0 0">${S.prioLevel === 'com' ? 'À l’échelle communale, la couverture vaut 0 % (aucune section active) ou 100 % : les communes forment deux colonnes. ' : ''}La position d’un territoire dépend de son score électoral et de sa couverture, pas des poids. Les <b>${TOPN()} territoires les plus prioritaires</b> selon la stratégie choisie sont cerclés et numérotés ; les autres sont estompés.</p></div></section>
           <section class="panel"><header><h3>Classement</h3><span class="sub" id="rankSub"></span></header><div class="tbl-wrap" id="rankTbl" style="max-height:70vh;overflow:auto"></div></section>
         </div>
       </div>`;
     },
     bind() {
-      $$('[data-w]').forEach(r => r.addEventListener('input', () => { S.weights[r.dataset.w] = +r.value; $('#o-' + r.dataset.w).textContent = r.value; PS.persist(); drawRank() }));
-      $('#resetW').addEventListener('click', () => { S.weights = { ...PS.DEFAULT_WEIGHTS }; PS.persist(); render() });
+      const refresh = () => { const cs = currentStrat(); $('#stratNow').textContent = cs.l; $$('[data-strat]').forEach(b => b.setAttribute('aria-pressed', b.dataset.strat === cs.k)); $$('[data-mystrat]').forEach(b => b.setAttribute('aria-pressed', 'my:' + myStrats[+b.dataset.mystrat].l === cs.k)); const sv = $('#saveStrat'); sv.disabled = cs.k !== 'perso'; drawRank() };
+      const apply = w => { S.weights = { ...w }; COMPONENTS.forEach(c => { $('#w-' + c.k).value = S.weights[c.k]; $('#o-' + c.k).textContent = S.weights[c.k] }); PS.persist(); refresh() };
+      $$('[data-w]').forEach(r => r.addEventListener('input', () => { S.weights[r.dataset.w] = +r.value; $('#o-' + r.dataset.w).textContent = r.value; PS.persist(); refresh() }));
+      $$('[data-strat]').forEach(b => b.addEventListener('click', () => apply(STRATS[b.dataset.strat].w)));
+      $$('[data-mystrat]').forEach(b => b.addEventListener('click', () => apply(myStrats[+b.dataset.mystrat].w)));
+      $$('[data-delstrat]').forEach(b => b.addEventListener('click', () => { const s = myStrats.splice(+b.dataset.delstrat, 1)[0]; saveStrats(); render(); PS.toast(`Stratégie « ${s.l} » supprimée.`) }));
+      $('#saveStrat').addEventListener('click', () => {
+        const m = PS.modal('Enregistrer la stratégie', `<div class="field"><label for="st-n">Nom de la stratégie</label><input id="st-n" placeholder="ex. Législatives — Thiès"></div><p class="small muted" style="margin:0">Poids : ${COMPONENTS.map(c => `${c.l} ${S.weights[c.k]}`).join(' · ')}.<br>Dans la démonstration, la stratégie est enregistrée dans ce navigateur. En production, l’administrateur peut la partager avec les coordinations.</p>`, '<button class="btn" data-close>Annuler</button><button class="btn primary" id="st-ok">Enregistrer</button>');
+        $('#st-ok', m).addEventListener('click', () => { const n = $('#st-n', m).value.trim(); if (!n) { PS.toast('Donnez un nom à la stratégie.'); return } if (Object.values(STRATS).some(s => s.l.toLowerCase() === n.toLowerCase()) || myStrats.some(s => s.l.toLowerCase() === n.toLowerCase())) { PS.toast('Ce nom est déjà utilisé.'); return } myStrats.push({ l: n, w: { ...S.weights } }); saveStrats(); PS.log(`a enregistré la stratégie de priorisation « ${n} »`); PS.closeModal(); render(); PS.toast(`Stratégie « ${n} » enregistrée.`) });
+      });
+      $('#toMap').addEventListener('click', () => { S.map.ind = 'priorite'; S.map.level = S.prioLevel; S.map.sel = null; go('carte') });
       $('#focusSel').addEventListener('change', e => { S.focus = e.target.value; render() });
       $('#plvl').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (b) { S.prioLevel = b.dataset.l; render() } });
       if (window.innerWidth < 900) $('#prioGrid').style.gridTemplateColumns = 'minmax(0,1fr)';
@@ -409,24 +442,33 @@ window.PS = window.PS || {};
     }
   };
   function prioUnits() { const T = PS.unit(S.focus); if (S.prioLevel === 'com') return PS.communesOf(T); if (T.level === 'nat') return PS.D.depts; if (T.level === 'reg') return T.children; if (T.level === 'dep') return [T]; return [PS.D.byId[T.parent]] }
-  function drawScatter() {
-    const ds = prioUnits(), W = 640, H = 360, m = { l: 44, r: 14, t: 14, b: 36 };
+  function drawScatter(rankOf) {
+    const ds = prioUnits(), W = 640, H = 360, m = { l: 44, r: 14, t: 14, b: 36 }, N = TOPN();
     const x = v => m.l + v / 100 * (W - m.l - m.r), y = v => H - m.b - (Math.min(v, 62) / 62) * (H - m.t - m.b);
     const mi = Math.max(...ds.map(d => d.inscrits)); const rr = d => (ds.length > 80 ? 3 : 4) + Math.sqrt(d.inscrits / mi) * (ds.length > 80 ? 8 : 14);
-    const jit = d => S.prioLevel === 'com' ? (PS.D.hash(d.id) % 100) / 100 * 8 - 4 : 0;
+    const jit = d => S.prioLevel === 'com' ? (d.couv > 0 ? -1 : 1) * (PS.D.hash(d.id) % 1000) / 1000 * 14 : 0;
+    const top = d => rankOf[d.id] <= N && ds.length > N;
     const q = `<rect x="${x(50)}" y="${y(62)}" width="${x(100) - x(50)}" height="${y(38) - y(62)}" fill="${css('--teal')}" fill-opacity=".07"/><rect x="${x(0)}" y="${y(62)}" width="${x(50) - x(0)}" height="${y(30) - y(62)}" fill="${css('--amber')}" fill-opacity=".08"/><rect x="${x(0)}" y="${y(28)}" width="${x(100) - x(0)}" height="${y(0) - y(28)}" fill="${css('--peri')}" fill-opacity=".06"/>`;
     const ax = [0, 25, 50, 75, 100].map(v => `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${H - m.b}" stroke="${css('--line')}"/><text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v} %</text>`).join('') + [0, 10, 20, 30, 40, 50, 60].map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join('');
     const lbl = `<text class="qlbl" x="${x(98)}" y="${y(58)}" text-anchor="end" style="fill:${css('--teal')}">Bastions</text><text class="qlbl" x="${x(2)}" y="${y(58)}" style="fill:${css('--amber')}">À renforcer</text><text class="qlbl" x="${x(98)}" y="${y(3)}" text-anchor="end" style="fill:${css('--peri')}">À conquérir</text><text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">Couverture communale →</text><text transform="translate(12 ${(m.t + H - m.b) / 2}) rotate(-90)" text-anchor="middle">Score électoral (%) →</text>`;
-    const dots = [...ds].sort((a, b) => b.inscrits - a.inscrits).map(d => `<circle cx="${(x(d.couv) + jit(d)).toFixed(1)}" cy="${y(d.score).toFixed(1)}" r="${rr(d).toFixed(1)}" fill="${css(TYPO[PS.typo(d)].c)}" fill-opacity=".75" stroke="${PS.surveiller(d) ? css('--coral') : css('--surface')}" stroke-width="${PS.surveiller(d) ? 2.2 : 1}" data-goto="${d.id}" style="cursor:pointer"><title>${esc(d.n)} — score ${d.score} %, couverture ${d.couv} %</title></circle>`).join('');
-    const names = [...ds].sort((a, b) => b.inscrits - a.inscrits).slice(0, ds.length <= 12 ? 12 : 7).map(d => `<text x="${x(d.couv) + jit(d) + rr(d) + 3}" y="${y(d.score) + 4}">${esc(d.n)}</text>`).join('');
+    const hl = ds.length > N;
+    const order = [...ds].sort((a, b) => (top(a) - top(b)) || (b.inscrits - a.inscrits));
+    const dots = order.map(d => { const t = top(d), cx = x(d.couv) + jit(d), cy = y(d.score), r = rr(d); return `<g data-goto="${d.id}" style="cursor:pointer"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(t ? Math.max(r, 9) : r).toFixed(1)}" fill="${css(TYPO[PS.typo(d)].c)}" fill-opacity="${hl && !t ? 0.22 : 0.85}" stroke="${t ? css('--ink') : (PS.surveiller(d) ? css('--coral') : css('--surface'))}" stroke-width="${t ? 2 : (PS.surveiller(d) ? 2 : 1)}"><title>${esc(d.n)} — priorité ${PS.priority(d)}/100 (rang ${rankOf[d.id]}), score ${d.score} %, couverture ${d.couv} %</title></circle>${t ? `<text class="rk" x="${cx.toFixed(1)}" y="${(cy + 3.6).toFixed(1)}" text-anchor="middle">${rankOf[d.id]}</text>` : ''}</g>` }).join('');
+    const named = hl ? ds.filter(top).filter(d => S.prioLevel !== 'com' || rankOf[d.id] <= 5) : [...ds].sort((a, b) => b.inscrits - a.inscrits).slice(0, 12);
+    const names = named.map(d => `<text class="nm" x="${x(d.couv) + jit(d) + Math.max(rr(d), 9) + 3}" y="${y(d.score) + 4}">${esc(d.n)}</text>`).join('');
     $('#scatter').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Matrice score électoral et couverture">${q}${ax}${lbl}${dots}${names}</svg>`;
   }
   function drawRank() {
-    const ds = prioUnits().map(d => ({ d, p: PS.priority(d) })).sort((a, b) => b.p - a.p);
-    $('#rankSub').textContent = `${ds.length} ${S.prioLevel === 'com' ? 'communes' : 'départements'}`;
-    $('#rankTbl').innerHTML = `<table class="tbl"><thead><tr><th>#</th><th>Territoire</th><th>Typologie</th><th class="n">Score</th><th class="n">Rang</th><th class="n">Couv.</th><th class="n">Inscrits</th><th>Priorité</th><th>Scénario recommandé</th></tr></thead><tbody>
-    ${ds.slice(0, 150).map(({ d, p }, i) => `<tr class="click" data-goto="${d.id}"><td class="rank">${i + 1}</td><td><b>${esc(d.n)}</b><div class="small muted">${esc(d.level === 'com' ? d.dep + ' · ' + d.r : d.r)}</div></td><td>${PS.typoChip(PS.typo(d))}${PS.surveiller(d) ? ' ' + PS.survChip : ''}</td><td class="n">${d.score.toLocaleString('fr-FR')} %</td><td class="n">${PS.RANG[d.rang].l}</td><td class="n">${d.couv} %</td><td class="n">${fmt(d.inscrits)}</td><td><div class="bar-cell"><div class="track"><div class="fill ${p >= 60 ? 'amber' : ''}" style="width:${p}%"></div></div><b class="num">${p}</b></div></td><td class="small">${esc((PS.recos(d)[0] || ['', '—'])[1])}</td></tr>`).join('')}</tbody></table>`;
-    drawScatter();
+    const base = prioUnits(), ref = STRATS.equilibree.w;
+    const ds = base.map(d => ({ d, p: PS.priority(d) })).sort((a, b) => b.p - a.p);
+    const refRank = Object.fromEntries(base.map(d => ({ d, p: PS.priorityW(d, ref) })).sort((a, b) => b.p - a.p).map((o, i) => [o.d.id, i + 1]));
+    const rankOf = Object.fromEntries(ds.map((o, i) => [o.d.id, i + 1]));
+    const isRef = sameW(S.weights, ref);
+    $('#rankSub').textContent = `${ds.length} ${S.prioLevel === 'com' ? 'communes' : 'départements'}${isRef ? '' : ' · évolution par rapport à la stratégie Équilibrée'}`;
+    const mv = d => { if (isRef) return ''; const v = refRank[d.id] - rankOf[d.id]; return v > 0 ? `<span class="mv up" title="Gagne ${v} place${v > 1 ? 's' : ''}">▲ ${v}</span>` : v < 0 ? `<span class="mv down" title="Perd ${-v} place${v < -1 ? 's' : ''}">▼ ${-v}</span>` : '<span class="mv">=</span>' };
+    $('#rankTbl').innerHTML = `<table class="tbl"><thead><tr><th>#</th>${isRef ? '' : '<th>Évol.</th>'}<th>Territoire</th><th>Typologie</th><th class="n">Score</th><th class="n">Rang</th><th class="n">Couv.</th><th class="n">Inscrits</th><th>Priorité</th><th>Scénario recommandé</th></tr></thead><tbody>
+    ${ds.slice(0, 150).map(({ d, p }, i) => `<tr class="click ${i < TOPN() && ds.length > TOPN() ? 'toprow' : ''}" data-goto="${d.id}"><td class="rank">${i + 1}</td>${isRef ? '' : `<td>${mv(d)}</td>`}<td><b>${esc(d.n)}</b><div class="small muted">${esc(d.level === 'com' ? d.dep + ' · ' + d.r : d.r)}</div></td><td>${PS.typoChip(PS.typo(d))}${PS.surveiller(d) ? ' ' + PS.survChip : ''}</td><td class="n">${d.score.toLocaleString('fr-FR')} %</td><td class="n">${PS.RANG[d.rang].l}</td><td class="n">${d.couv} %</td><td class="n">${fmt(d.inscrits)}</td><td><div class="bar-cell"><div class="track"><div class="fill ${p >= 60 ? 'amber' : ''}" style="width:${p}%"></div></div><b class="num">${p}</b></div></td><td class="small">${esc((PS.recos(d)[0] || ['', '—'])[1])}</td></tr>`).join('')}</tbody></table>`;
+    drawScatter(rankOf);
   }
   PS.indicatorInfo = function (k) {
     const I = PS.INDICATORS[k];

@@ -24,8 +24,8 @@ window.PS = window.PS || {};
           <div id="map" aria-label="Carte stratégique du Sénégal"></div>
           <div class="mp-col">
             <details class="mp mp-layers" ${wide() ? 'open' : ''}><summary>Couches</summary><div class="mpb" id="mpLayers"></div></details>
-            <details class="mp mp-legend" ${wide() ? 'open' : ''}><summary>Légende</summary><div class="mpb" id="mpLegend"></div></details>
           </div>
+          <details class="mp mp-legend" id="mpLegendBox" ${S.map.legendOpen ?? wide() ? 'open' : ''}><summary>Légende</summary><div class="mpb" id="mpLegend"></div></details>
           <div class="mp mp-tools">${canDraw ? '<button class="btn sm" id="drawBtn" title="Délimiter un secteur de porte-à-porte">✎ Zone d’action</button>' : ''}<button class="btn sm" id="fitBtn">⌖ Mon périmètre</button><button class="btn sm" id="natBtn">Sénégal</button></div>
           <div id="mapHint"></div>
         </div>
@@ -34,6 +34,7 @@ window.PS = window.PS || {};
     },
     bind() {
       renderLayersPanel(); renderLegend();
+      $('#mpLegendBox').addEventListener('toggle', e => { S.map.legendOpen = e.target.open });
       $('#fitBtn').addEventListener('click', fitPerimeter);
       $('#natBtn').addEventListener('click', () => M.m.fitBounds(L.geoJSON({ type: 'FeatureCollection', features: PS.D.regions.map(r => ({ type: 'Feature', geometry: r.geom })) }).getBounds(), { padding: [10, 10] }));
       const db = $('#drawBtn'); if (db) db.addEventListener('click', startDraw);
@@ -83,8 +84,8 @@ window.PS = window.PS || {};
     M.m = L.map('map', { zoomSnap: 0.25, minZoom: 6, maxZoom: 16, zoomControl: false, attributionControl: true });
     M.m.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
     M.m.setView([14.4, -14.6], 7, { animate: false });
-    L.control.zoom({ position: 'bottomright' }).addTo(M.m);
-    L.control.scale({ metric: true, imperial: false, position: 'bottomright' }).addTo(M.m);
+    L.control.zoom({ position: 'bottomleft' }).addTo(M.m);
+    L.control.scale({ metric: true, imperial: false, position: 'bottomleft' }).addTo(M.m);
     M.g = { choro: L.featureGroup().addTo(M.m), remontees: L.layerGroup().addTo(M.m), iso: L.layerGroup().addTo(M.m), zones: L.layerGroup().addTo(M.m), sections: L.layerGroup().addTo(M.m), coords: L.layerGroup().addTo(M.m), labels: L.layerGroup().addTo(M.m), draw: L.layerGroup().addTo(M.m) };
     M.m.createPane('iso'); M.m.getPane('iso').style.zIndex = 420;
     drawBase(); drawChoro(); drawOverlays();
